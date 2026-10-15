@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.KeyEvent
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -33,10 +34,14 @@ interface RdpClient {
 typealias FreeRdpClient = VncClient
 
 class VncClient : RdpClient {
+    private val timeoutMs = 300000
     private val main = Handler(Looper.getMainLooper())
     private val sender = Executors.newSingleThreadExecutor()
     private val lock = Any()
     @Volatile private var running = false
+    @Volatile private var stage = ""
+    @Volatile private var ticking = false
+    private var startTime = 0L
     private var socket: Socket? = null
     private var out: DataOutputStream? = null
     private var width = 0
@@ -47,41 +52,67 @@ class VncClient : RdpClient {
 
     override fun connect(s: Server, l: RdpListener) {
         running = true
+        startTime = System.currentTimeMillis()
+        ticking = true
+        setStage(l, "Starting connection")
+        val ticker = object : Runnable {
+            override fun run() {
+                if (!ticking || !running) return
+                val sec = (System.currentTimeMillis() - startTime) / 1000
+                l.onLog("$stage\n${sec}s / ${timeoutMs / 1000}s")
+                main.postDelayed(this, 1000)
+            }
+        }
+        main.postDelayed(ticker, 1000)
         Thread {
             try {
                 run(s, l)
             } catch (e: Exception) {
+                ticking = false
                 if (running) {
-                    val msg = "${e.javaClass.simpleName}: ${e.message}"
+                    val msg = "${e.javaClass.simpleName}: ${e.message} (stage: $stage)"
                     main.post { l.onError(msg) }
                 }
             }
         }.start()
     }
 
+    private fun setStage(l: RdpListener, text: String) {
+        stage = text
+        val sec = (System.currentTimeMillis() - startTime) / 1000
+        main.post { l.onLog("$text\n${sec}s / ${timeoutMs / 1000}s") }
+    }
+
     private fun run(s: Server, l: RdpListener) {
         var host = s.host.trim()
         var port = 5900
         val idx = host.lastIndexOf(':')
-        if (idx > 0 && host.substring(idx + 1).all { it.isDigit() } && host.substring(idx + 1).isNotEmpty()) {
+        if (idx > 0 && host.substring(idx + 1).isNotEmpty() && host.substring(idx + 1).all { it.isDigit() }) {
             port = host.substring(idx + 1).toInt()
             host = host.substring(0, idx)
         }
-        main.post { l.onLog("Connecting to $host:$port...") }
+
+        setStage(l, "Resolving host $host")
+        val address = InetAddress.getByName(host)
+
+        setStage(l, "Connecting to ${address.hostAddress}:$port")
         val sock = Socket()
-        sock.connect(InetSocketAddress(host, port), 10000)
+        sock.connect(InetSocketAddress(address, port), timeoutMs)
         sock.tcpNoDelay = true
+        sock.soTimeout = timeoutMs
         socket = sock
         val input = DataInputStream(sock.getInputStream().buffered())
         val output = DataOutputStream(sock.getOutputStream())
         out = output
 
-        main.post { l.onLog("Negotiating protocol...") }
+        setStage(l, "Connected to server. Waiting for protocol version")
         val ver = ByteArray(12)
         input.readFully(ver)
+        setStage(l, "Server version: ${String(ver).trim()}. Negotiating protocol")
         output.write("RFB 003.008\n".toByteArray())
         output.flush()
 
+        setStage(l, "Waiting for security types")
         val n = input.readUnsignedByte()
         if (n == 0) {
             val len = input.readInt()
@@ -96,16 +127,19 @@ class VncClient : RdpClient {
             types.contains(2.toByte()) -> 2
             else -> throw Exception("Unsupported security type")
         }
+        setStage(l, if (choose == 1) "Security: none" else "Security: password")
         output.writeByte(choose)
         output.flush()
 
         if (choose == 2) {
-            main.post { l.onLog("Authenticating...") }
+            setStage(l, "Waiting for authentication challenge")
             val challenge = ByteArray(16)
             input.readFully(challenge)
+            setStage(l, "Sending password")
             output.write(encrypt(s.password, challenge))
             output.flush()
         }
+        setStage(l, "Waiting for authentication result")
         val result = input.readInt()
         if (result != 0) {
             val len = input.readInt()
@@ -114,6 +148,7 @@ class VncClient : RdpClient {
             throw Exception("Authentication failed: ${String(msg)}")
         }
 
+        setStage(l, "Authenticated. Initializing session")
         output.writeByte(1)
         output.flush()
         width = input.readUnsignedShort()
@@ -124,6 +159,7 @@ class VncClient : RdpClient {
         mx = width / 2f
         my = height / 2f
 
+        setStage(l, "Configuring display ${width}x$height")
         val pf = ByteArray(20)
         pf[0] = 0
         pf[4] = 32
@@ -143,9 +179,10 @@ class VncClient : RdpClient {
         }
 
         val fb = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        main.post { l.onConnected("Windows") }
+        setStage(l, "Waiting for first screen image")
         requestUpdate(false)
 
+        var first = true
         while (running) {
             when (input.readUnsignedByte()) {
                 0 -> {
@@ -158,6 +195,7 @@ class VncClient : RdpClient {
                         val h = input.readUnsignedShort()
                         val enc = input.readInt()
                         if (enc != 0) throw Exception("Unsupported encoding $enc")
+                        if (first) setStage(l, "Receiving screen data")
                         val buf = ByteArray(w * h * 4)
                         input.readFully(buf)
                         val px = IntArray(w * h)
@@ -170,6 +208,12 @@ class VncClient : RdpClient {
                         if (x + w <= width && y + h <= height) fb.setPixels(px, 0, w, x, y, w, h)
                     }
                     val copy = fb.copy(Bitmap.Config.ARGB_8888, false)
+                    if (first) {
+                        first = false
+                        ticking = false
+                        sock.soTimeout = 0
+                        main.post { if (running) l.onConnected("Windows") }
+                    }
                     main.post { if (running) l.onFrame(copy) }
                     requestUpdate(true)
                 }
@@ -231,6 +275,7 @@ class VncClient : RdpClient {
 
     override fun disconnect() {
         running = false
+        ticking = false
         try {
             socket?.close()
         } catch (_: Exception) {
