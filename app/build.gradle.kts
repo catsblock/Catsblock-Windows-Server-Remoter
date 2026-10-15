@@ -7,12 +7,23 @@ plugins {
 android {
     namespace = "com.example.wsr"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
     defaultConfig {
         applicationId = "com.example.wsr"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild {
+            cmake { arguments("-DWSR_DEPS=${rootDir}/deps") }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     buildFeatures { compose = true }
     compileOptions {
