@@ -1,6 +1,7 @@
 package com.example.wsr
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ActivityInfo
@@ -113,6 +114,15 @@ fun SessionScreen(
         onExit()
     }
 
+    DisposableEffect(client) {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val l = ClipboardManager.OnPrimaryClipChangedListener {
+            cm.primaryClip?.getItemAt(0)?.text?.let { client.setClipboard(it.toString()) }
+        }
+        cm.addPrimaryClipChangedListener(l)
+        onDispose { cm.removePrimaryClipChangedListener(l) }
+    }
+
     DisposableEffect(server.id, retry) {
         state = State.Connecting
         log = "Starting connection..."
@@ -122,6 +132,10 @@ fun SessionScreen(
             override fun onError(code: String) { state = State.Error(code) }
             override fun onConnected(osName: String) { onOs(osName); state = State.Connected }
             override fun onFrame(bmp: Bitmap) { frame = bmp }
+            override fun onClipboard(text: String) {
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("rdp", text))
+            }
         })
         onDispose { client.disconnect() }
     }
@@ -353,9 +367,15 @@ private fun KeyPanel(client: RdpClient, modifier: Modifier) {
         "←" to KeyEvent.KEYCODE_DPAD_LEFT,
         "↑" to KeyEvent.KEYCODE_DPAD_UP,
         "↓" to KeyEvent.KEYCODE_DPAD_DOWN,
-        "→" to KeyEvent.KEYCODE_DPAD_RIGHT,
-        "C" to KeyEvent.KEYCODE_C,
-        "V" to KeyEvent.KEYCODE_V
+        "→" to KeyEvent.KEYCODE_DPAD_RIGHT
+    )
+    val combos = listOf(
+        "Ctrl+C" to KeyEvent.KEYCODE_C,
+        "Ctrl+V" to KeyEvent.KEYCODE_V,
+        "Ctrl+X" to KeyEvent.KEYCODE_X,
+        "Ctrl+Z" to KeyEvent.KEYCODE_Z,
+        "Ctrl+Y" to KeyEvent.KEYCODE_Y,
+        "Ctrl+A" to KeyEvent.KEYCODE_A
     )
     val modifiers = listOf(
         KeyEvent.KEYCODE_CTRL_LEFT,
@@ -366,6 +386,26 @@ private fun KeyPanel(client: RdpClient, modifier: Modifier) {
 
     Surface(modifier.fillMaxWidth(), color = Color.Black.copy(alpha = 0.7f)) {
         LazyRow(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            item {
+                AssistChip(
+                    {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.primaryClip?.getItemAt(0)?.text?.let { client.pasteText(it.toString()) }
+                    },
+                    { Text("Paste clipboard") }
+                )
+            }
+            items(combos) { (n, code) ->
+                AssistChip(
+                    {
+                        client.key(KeyEvent.KEYCODE_CTRL_LEFT, true)
+                        client.key(code, true)
+                        client.key(code, false)
+                        client.key(KeyEvent.KEYCODE_CTRL_LEFT, false)
+                    },
+                    { Text(n) }
+                )
+            }
             items(keys) { (n, code) ->
                 FilterChip(
                     code in held,
@@ -384,15 +424,6 @@ private fun KeyPanel(client: RdpClient, modifier: Modifier) {
                         }
                     },
                     { Text(n) }
-                )
-            }
-            item {
-                AssistChip(
-                    {
-                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.primaryClip?.getItemAt(0)?.text?.let { client.pasteText(it.toString()) }
-                    },
-                    { Text("Paste clipboard") }
                 )
             }
         }
