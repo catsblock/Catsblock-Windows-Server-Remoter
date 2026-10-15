@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/input.h>
@@ -237,6 +239,12 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     my = h / 2;
     clip = NULL;
     lastLog[0] = 0;
+    setenv("HOME", "/data/data/com.example.wsr/files", 1);
+    setenv("XDG_CONFIG_HOME", "/data/data/com.example.wsr/files/.config", 1);
+    setenv("TMPDIR", "/data/data/com.example.wsr/cache", 1);
+    mkdir("/data/data/com.example.wsr/files", 0700);
+    mkdir("/data/data/com.example.wsr/files/.config", 0700);
+    mkdir("/data/data/com.example.wsr/cache", 0700);
     jclass c = (*e)->GetObjectClass(e, t);
     mLog = (*e)->GetMethodID(e, c, "jLog", "(Ljava/lang/String;)V");
     mErr = (*e)->GetMethodID(e, c, "jError", "(Ljava/lang/String;)V");
@@ -266,9 +274,10 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     inst->PostConnect = post;
     inst->PostDisconnect = postdc;
     inst->VerifyCertificateEx = verify;
+    errno = 0;
     if (!freerdp_context_new(inst)) {
         char eb[900];
-        snprintf(eb, sizeof eb, "0x00000002 Context creation failed | %s", lastLog);
+        snprintf(eb, sizeof eb, "0x00000002 Context creation failed | errno=%d %s | %s", errno, strerror(errno), lastLog);
         callStr(mErr, eb);
         freerdp_free(inst);
         inst = NULL;
