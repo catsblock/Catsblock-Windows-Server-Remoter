@@ -14,6 +14,7 @@ interface RdpListener {
     fun onError(code: String)
     fun onConnected(osName: String)
     fun onFrame(bmp: Bitmap)
+    fun onClipboard(text: String)
 }
 
 interface RdpClient {
@@ -24,6 +25,7 @@ interface RdpClient {
     fun scroll(amount: Int)
     fun key(androidKeyCode: Int, down: Boolean)
     fun pasteText(text: String)
+    fun setClipboard(text: String)
 }
 
 class FreeRdpClient : RdpClient {
@@ -33,7 +35,9 @@ class FreeRdpClient : RdpClient {
     private var bitmap: Bitmap? = null
     @Volatile private var live = false
     @Volatile private var ticking = false
+    @Volatile private var connected = false
     @Volatile private var stage = ""
+    @Volatile private var lastClip = ""
     private var startTime = 0L
 
     private external fun nativeRun(
@@ -46,6 +50,7 @@ class FreeRdpClient : RdpClient {
     private external fun nativeWheel(up: Boolean)
     private external fun nativeKey(sc: Int, down: Boolean)
     private external fun nativeUnicode(code: Int, down: Boolean)
+    private external fun nativeSetClip(text: String)
 
     fun jLog(s: String) {
         stage = s
@@ -61,6 +66,7 @@ class FreeRdpClient : RdpClient {
 
     fun jOk() {
         ticking = false
+        connected = true
         main.post { if (live) listener?.onConnected("Windows") }
     }
 
@@ -69,6 +75,11 @@ class FreeRdpClient : RdpClient {
         val c = b.copy(Bitmap.Config.ARGB_8888, false)
         c.setHasAlpha(false)
         main.post { if (live) listener?.onFrame(c) }
+    }
+
+    fun jClip(text: String) {
+        lastClip = text
+        main.post { if (live) listener?.onClipboard(text) }
     }
 
     fun jCert(fp: String): Boolean {
@@ -87,6 +98,7 @@ class FreeRdpClient : RdpClient {
         listener = l
         live = true
         ticking = true
+        connected = false
         startTime = System.currentTimeMillis()
         stage = "Starting connection"
         l.onLog("$stage\n0s / ${timeoutSec}s")
@@ -127,10 +139,17 @@ class FreeRdpClient : RdpClient {
     override fun disconnect() {
         live = false
         ticking = false
+        connected = false
         try {
             nativeStop()
         } catch (_: Throwable) {
         }
+    }
+
+    override fun setClipboard(text: String) {
+        if (!connected || text == lastClip) return
+        lastClip = text
+        Thread { try { nativeSetClip(text) } catch (_: Throwable) {} }.start()
     }
 
     override fun mouseMove(dx: Float, dy: Float) {
