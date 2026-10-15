@@ -14,7 +14,7 @@ interface RdpListener {
     fun onError(code: String)
     fun onConnected(osName: String)
     fun onFrame(bmp: Bitmap)
-    fun onClipboard(text: String)
+    fun onClipboard(text: String) {}
 }
 
 interface RdpClient {
