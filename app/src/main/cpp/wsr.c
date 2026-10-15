@@ -16,6 +16,8 @@
 #include <winpr/wlog.h>
 #include <winpr/string.h>
 
+extern BOOL freerdp_client_load_addins(rdpChannels *channels, rdpSettings *settings) __attribute__((weak));
+
 typedef struct {
     rdpContext c;
     char pad[16384];
@@ -184,8 +186,9 @@ static BOOL pre(freerdp *i) {
     callStr(mLog, "TCP connected. Negotiating security (NLA/TLS)");
     rdpSettings *s = i->context->settings;
     freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, TRUE);
-    if (!freerdp_client_load_addins(i->context->channels, s)) {
-        callStr(mLog, "Clipboard channel could not be loaded");
+    if (freerdp_client_load_addins) {
+        if (!freerdp_client_load_addins(i->context->channels, s))
+            callStr(mLog, "Clipboard channel could not be loaded");
     }
     return TRUE;
 }
