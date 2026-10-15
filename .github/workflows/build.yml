@@ -6,12 +6,59 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      NDK_VER: 26.1.10909125
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+      - name: Install NDK and CMake
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;$NDK_VER" "cmake;3.22.1"
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: deps
+          key: deps-v1-${{ hashFiles('.github/workflows/build.yml') }}
+      - name: Build OpenSSL and FreeRDP
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          export NDK=$ANDROID_HOME/ndk/$NDK_VER
+          export DEPS=$GITHUB_WORKSPACE/deps
+          mkdir -p $DEPS
+          cd /tmp
+          curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.15/openssl-3.0.15.tar.gz | tar xz
+          cd openssl-3.0.15
+          export ANDROID_NDK_ROOT=$NDK
+          export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          ./Configure android-arm64 -D__ANDROID_API__=26 no-shared no-tests --prefix=$DEPS --openssldir=$DEPS/ssl --libdir=lib
+          make -j4 build_libs
+          make install_dev
+          cd /tmp
+          git clone --depth 1 --branch 3.10.3 https://github.com/FreeRDP/FreeRDP.git
+          cd FreeRDP
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS \
+            -DCMAKE_FIND_ROOT_PATH=$DEPS -DOPENSSL_ROOT_DIR=$DEPS \
+            -DOPENSSL_USE_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_TESTING=OFF \
+            -DWITH_CLIENT=OFF -DWITH_SERVER=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF \
+            -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_CLIENT_CHANNELS=OFF \
+            -DWITH_SERVER_CHANNELS=OFF -DWITH_PLATFORM_SERVER=OFF -DWITH_X11=OFF \
+            -DWITH_WAYLAND=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_CAIRO=OFF \
+            -DWITH_FUSE=OFF -DWITH_OPUS=OFF -DWITH_FAAC=OFF -DWITH_FAAD2=OFF \
+            -DWITH_GSM=OFF -DWITH_LAME=OFF -DWITH_SOXR=OFF -DWITH_OPENH264=OFF \
+            -DWITH_JPEG=OFF -DWITH_KRB5=OFF -DWITH_JSON_DISABLED=ON -DWITH_AAD=OFF \
+            -DWITH_WEBVIEW=OFF -DWITH_CLIENT_SDL=OFF -DWITH_PCSC=OFF \
+            -DWITH_INTERNAL_MD4=ON -DWITH_INTERNAL_MD5=ON -DWITH_INTERNAL_RC4=ON
+          cmake --build build -j4
+          cmake --install build
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
