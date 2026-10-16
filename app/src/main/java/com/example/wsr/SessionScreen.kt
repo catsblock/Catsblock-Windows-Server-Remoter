@@ -8,11 +8,13 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,9 +31,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
@@ -47,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -57,15 +65,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -105,9 +124,20 @@ fun SessionScreen(
     var cert by remember(server.id) { mutableStateOf<Pair<String, (Boolean) -> Unit>?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     var showKeys by remember { mutableStateOf(false) }
+    var showPhoneKb by remember { mutableStateOf(false) }
     var showServers by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
+    var cx by remember { mutableIntStateOf(640) }
+    var cy by remember { mutableIntStateOf(360) }
+
+    val onMove: (Float, Float) -> Unit = { dx, dy ->
+        val ix = dx.toInt()
+        val iy = dy.toInt()
+        cx = (cx + ix).coerceIn(0, 1279)
+        cy = (cy + iy).coerceIn(0, 719)
+        client.mouseMove(ix.toFloat(), iy.toFloat())
+    }
 
     BackHandler {
         client.disconnect()
@@ -126,6 +156,8 @@ fun SessionScreen(
     DisposableEffect(server.id, retry) {
         state = State.Connecting
         log = "Starting connection..."
+        cx = 640
+        cy = 360
         client.connect(server, object : RdpListener {
             override fun onLog(msg: String) { log = msg }
             override fun onCertificate(fingerprint: String, accept: (Boolean) -> Unit) { cert = fingerprint to accept }
@@ -164,17 +196,51 @@ fun SessionScreen(
                 }
             }
             State.Connected -> {
-                frame?.let {
-                    Image(
-                        it.asImageBitmap(), null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                            .graphicsLayer(scaleX = zoom, scaleY = zoom)
-                            .pointerInput(server.id) { touchpad(client, server.swapMouse) }
-                    )
+                Box(
+                    Modifier.fillMaxSize()
+                        .pointerInput(server.id, server.swapMouse) { touchpad(client, server.swapMouse, onMove) }
+                ) {
+                    Box(Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom)) {
+                        frame?.let {
+                            Image(
+                                it.asImageBitmap(), null,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        Canvas(Modifier.fillMaxSize()) {
+                            val sc = minOf(size.width / 1280f, size.height / 720f)
+                            val ox = (size.width - 1280f * sc) / 2f
+                            val oy = (size.height - 720f * sc) / 2f
+                            val px = ox + cx * sc
+                            val py = oy + cy * sc
+                            val k = density * 1.2f
+                            val p = Path().apply {
+                                moveTo(px, py)
+                                lineTo(px, py + 18f * k)
+                                lineTo(px + 5f * k, py + 14f * k)
+                                lineTo(px + 9f * k, py + 22f * k)
+                                lineTo(px + 12f * k, py + 21f * k)
+                                lineTo(px + 8f * k, py + 13f * k)
+                                lineTo(px + 14f * k, py + 13f * k)
+                                close()
+                            }
+                            drawPath(p, Color.White)
+                            drawPath(p, Color.Black, style = Stroke(width = 1.5f * density))
+                        }
+                    }
                 }
                 if (Prefs.joystick) {
                     Joystick(client, Modifier.align(Alignment.BottomStart).padding(16.dp))
+                }
+                if (Prefs.scrollButtons) {
+                    Column(
+                        Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        ScrollKey(Icons.Default.KeyboardArrowUp, 1, client)
+                        ScrollKey(Icons.Default.KeyboardArrowDown, -1, client)
+                    }
                 }
                 if (Prefs.space) {
                     Box(
@@ -204,9 +270,20 @@ fun SessionScreen(
                     BarIcon(Icons.Default.GridView) { showServers = true }
                     BarIcon(Icons.Default.ZoomIn) { zoom = if (zoom >= 2f) 1f else zoom + 0.5f }
                     BarIcon(Icons.Default.Settings) { showSettings = true }
-                    BarIcon(Icons.Default.Keyboard) { showKeys = !showKeys }
+                    BarIcon(Icons.Default.Keyboard) {
+                        showKeys = !showKeys
+                        if (!showKeys) showPhoneKb = false
+                    }
                 }
-                if (showKeys) KeyPanel(client, Modifier.align(Alignment.BottomCenter))
+                if (showKeys) {
+                    KeyPanel(
+                        client,
+                        showPhoneKb,
+                        { showPhoneKb = !showPhoneKb },
+                        Modifier.align(Alignment.BottomCenter)
+                    )
+                }
+                if (showPhoneKb) PhoneKeyboard(client)
             }
         }
     }
@@ -253,14 +330,44 @@ private fun BarIcon(icon: ImageVector, onClick: () -> Unit) {
     }
 }
 
-private suspend fun PointerInputScope.touchpad(client: RdpClient, swap: Boolean) {
+@Composable
+private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
+    Box(
+        Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f))
+            .pointerInput(dir) {
+                detectTapGestures(onPress = {
+                    client.scroll(dir)
+                    coroutineScope {
+                        val j = launch {
+                            delay(350)
+                            while (true) {
+                                client.scroll(dir)
+                                delay(70)
+                            }
+                        }
+                        awaitRelease()
+                        j.cancel()
+                    }
+                })
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, null, tint = Color.White)
+    }
+}
+
+private suspend fun PointerInputScope.touchpad(
+    client: RdpClient,
+    swap: Boolean,
+    onMove: (Float, Float) -> Unit
+) {
     val left = if (swap) 1 else 0
     val right = if (swap) 0 else 1
     var taps = 0
     var job: Job? = null
     coroutineScope {
         awaitEachGesture {
-            val down = awaitFirstDown()
+            val down = awaitFirstDown(requireUnconsumed = false)
             val r = withTimeoutOrNull(2000) {
                 var res = G.UP
                 while (true) {
@@ -282,7 +389,7 @@ private suspend fun PointerInputScope.touchpad(client: RdpClient, swap: Boolean)
                     val c = awaitPointerEvent().changes.first()
                     if (!c.pressed) break
                     val d = (c.position - prev) * Prefs.sensitivity
-                    client.mouseMove(d.x, d.y)
+                    onMove(d.x, d.y)
                     prev = c.position
                     c.consume()
                 }
@@ -352,7 +459,53 @@ private fun Joystick(client: RdpClient, modifier: Modifier) {
 }
 
 @Composable
-private fun KeyPanel(client: RdpClient, modifier: Modifier) {
+private fun PhoneKeyboard(client: RdpClient) {
+    val focus = remember { FocusRequester() }
+    val kb = LocalSoftwareKeyboardController.current
+    var text by remember { mutableStateOf("") }
+
+    fun tap(code: Int) {
+        client.key(code, true)
+        client.key(code, false)
+    }
+
+    LaunchedEffect(Unit) {
+        focus.requestFocus()
+        kb?.show()
+    }
+    DisposableEffect(Unit) {
+        onDispose { kb?.hide() }
+    }
+
+    BasicTextField(
+        value = text,
+        onValueChange = { v ->
+            if (v.isNotEmpty()) client.pasteText(v)
+            text = ""
+        },
+        modifier = Modifier.size(1.dp).focusRequester(focus).onPreviewKeyEvent { ev ->
+            if (ev.type == KeyEventType.KeyDown && ev.key == Key.Backspace) {
+                tap(KeyEvent.KEYCODE_DEL)
+                true
+            } else if (ev.type == KeyEventType.KeyDown && ev.key == Key.Enter) {
+                tap(KeyEvent.KEYCODE_ENTER)
+                true
+            } else {
+                false
+            }
+        },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+        keyboardActions = KeyboardActions(onSend = { tap(KeyEvent.KEYCODE_ENTER) })
+    )
+}
+
+@Composable
+private fun KeyPanel(
+    client: RdpClient,
+    phoneOn: Boolean,
+    onPhone: () -> Unit,
+    modifier: Modifier
+) {
     val ctx = LocalContext.current
     val keys = listOf(
         "Win" to KeyEvent.KEYCODE_META_LEFT,
@@ -386,6 +539,9 @@ private fun KeyPanel(client: RdpClient, modifier: Modifier) {
 
     Surface(modifier.fillMaxWidth(), color = Color.Black.copy(alpha = 0.7f)) {
         LazyRow(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            item {
+                FilterChip(phoneOn, onPhone, { Text("Phone keyboard") })
+            }
             item {
                 AssistChip(
                     {
