@@ -198,7 +198,9 @@ fun SessionScreen(
             State.Connected -> {
                 Box(
                     Modifier.fillMaxSize()
-                        .pointerInput(server.id, server.swapMouse) { touchpad(client, server.swapMouse, onMove) }
+                        .pointerInput(server.id, server.swapMouse, Prefs.mouseButtons) {
+                            touchpad(client, server.swapMouse, Prefs.mouseButtons, onMove)
+                        }
                 ) {
                     Box(Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom)) {
                         frame?.let {
@@ -214,7 +216,7 @@ fun SessionScreen(
                             val oy = (size.height - 720f * sc) / 2f
                             val px = ox + cx * sc
                             val py = oy + cy * sc
-                            val k = density * 1.2f
+                            val k = density * 1.2f * Prefs.cursorSize
                             val p = Path().apply {
                                 moveTo(px, py)
                                 lineTo(px, py + 18f * k)
@@ -226,7 +228,7 @@ fun SessionScreen(
                                 close()
                             }
                             drawPath(p, Color.White)
-                            drawPath(p, Color.Black, style = Stroke(width = 1.5f * density))
+                            drawPath(p, Color.Black, style = Stroke(width = 1.5f * density * Prefs.cursorSize))
                         }
                     }
                 }
@@ -240,6 +242,17 @@ fun SessionScreen(
                     ) {
                         ScrollKey(Icons.Default.KeyboardArrowUp, 1, client)
                         ScrollKey(Icons.Default.KeyboardArrowDown, -1, client)
+                    }
+                }
+                if (Prefs.mouseButtons) {
+                    val l = if (server.swapMouse) 1 else 0
+                    val r = if (server.swapMouse) 0 else 1
+                    Row(
+                        Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 72.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        MouseKey("Left", l, client)
+                        MouseKey("Right", r, client)
                     }
                 }
                 if (Prefs.space) {
@@ -331,6 +344,26 @@ private fun BarIcon(icon: ImageVector, onClick: () -> Unit) {
 }
 
 @Composable
+private fun MouseKey(label: String, button: Int, client: RdpClient) {
+    Box(
+        Modifier.size(width = 72.dp, height = 48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.25f))
+            .pointerInput(button) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    client.mouseButton(button, true)
+                    waitForUpOrCancellation()
+                    client.mouseButton(button, false)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White)
+    }
+}
+
+@Composable
 private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
     Box(
         Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f))
@@ -359,6 +392,7 @@ private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
 private suspend fun PointerInputScope.touchpad(
     client: RdpClient,
     swap: Boolean,
+    buttonsMode: Boolean,
     onMove: (Float, Float) -> Unit
 ) {
     val left = if (swap) 1 else 0
@@ -368,6 +402,20 @@ private suspend fun PointerInputScope.touchpad(
     coroutineScope {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
+
+            if (buttonsMode) {
+                var p = down.position
+                while (true) {
+                    val c = awaitPointerEvent().changes.first()
+                    if (!c.pressed) break
+                    val d = (c.position - p) * Prefs.sensitivity
+                    onMove(d.x, d.y)
+                    p = c.position
+                    c.consume()
+                }
+                return@awaitEachGesture
+            }
+
             val r = withTimeoutOrNull(2000) {
                 var res = G.UP
                 while (true) {
