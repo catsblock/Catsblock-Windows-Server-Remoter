@@ -76,6 +76,7 @@ object Store {
 object Prefs {
     var joystick by mutableStateOf(Store.b("joy", true))
     var space by mutableStateOf(Store.b("space", true))
+    var scrollButtons by mutableStateOf(Store.b("scroll", false))
     var joySize by mutableStateOf(Store.f("joySize", 90f))
     var barAlpha by mutableStateOf(Store.f("barAlpha", 0.35f))
     var dynamicColor by mutableStateOf(Store.b("dyn", true))
@@ -84,6 +85,7 @@ object Prefs {
     fun save() {
         Store.putB("joy", joystick)
         Store.putB("space", space)
+        Store.putB("scroll", scrollButtons)
         Store.putF("joySize", joySize)
         Store.putF("barAlpha", barAlpha)
         Store.putB("dyn", dynamicColor)
