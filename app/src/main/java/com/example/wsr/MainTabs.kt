@@ -3,9 +3,9 @@ package com.example.wsr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -162,6 +162,7 @@ fun SettingsPage() {
         SwitchRow("Material You dynamic colors", Prefs.dynamicColor) { Prefs.dynamicColor = it; Prefs.save() }
         SwitchRow("Show joystick (WASD)", Prefs.joystick) { Prefs.joystick = it; Prefs.save() }
         SwitchRow("Show space button", Prefs.space) { Prefs.space = it; Prefs.save() }
+        SwitchRow("Show scroll arrows (up/down)", Prefs.scrollButtons) { Prefs.scrollButtons = it; Prefs.save() }
         Text("Joystick size")
         Slider(Prefs.joySize, { Prefs.joySize = it }, valueRange = 60f..160f, onValueChangeFinished = { Prefs.save() })
         Text("Top bar opacity")
