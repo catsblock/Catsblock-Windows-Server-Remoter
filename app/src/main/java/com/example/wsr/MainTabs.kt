@@ -163,8 +163,11 @@ fun SettingsPage() {
         SwitchRow("Show joystick (WASD)", Prefs.joystick) { Prefs.joystick = it; Prefs.save() }
         SwitchRow("Show space button", Prefs.space) { Prefs.space = it; Prefs.save() }
         SwitchRow("Show scroll arrows (up/down)", Prefs.scrollButtons) { Prefs.scrollButtons = it; Prefs.save() }
+        SwitchRow("Show Mouse buttons instead of By touch", Prefs.mouseButtons) { Prefs.mouseButtons = it; Prefs.save() }
         Text("Joystick size")
         Slider(Prefs.joySize, { Prefs.joySize = it }, valueRange = 60f..160f, onValueChangeFinished = { Prefs.save() })
+        Text("Cursor size")
+        Slider(Prefs.cursorSize, { Prefs.cursorSize = it }, valueRange = 0.3f..1.5f, onValueChangeFinished = { Prefs.save() })
         Text("Top bar opacity")
         Slider(Prefs.barAlpha, { Prefs.barAlpha = it }, valueRange = 0.1f..1f, onValueChangeFinished = { Prefs.save() })
         Text("Cursor sensitivity")
