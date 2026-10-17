@@ -28,7 +28,6 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.SwapHoriz
-import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -154,6 +153,11 @@ fun ServerForm(initial: Server?, onBack: () -> Unit, onSave: (Server) -> Unit) {
                 }
             }
 
+            SectionTitle("Display")
+            SettingsGroup {
+                ResolutionRow(s.resW, s.maxW) { s = s.copy(resW = it, resH = Res.h(it)) }
+            }
+
             SectionTitle("Gateway")
             SettingsGroup {
                 SettingSwitch(Icons.Rounded.Router, "Do not use any local gateway", s.gateway.isEmpty()) {
@@ -193,7 +197,6 @@ fun ServerForm(initial: Server?, onBack: () -> Unit, onSave: (Server) -> Unit) {
             SectionTitle("Redirection")
             SettingsGroup {
                 SettingSwitch(Icons.Rounded.Mic, "Microphone", s.mic) { s = s.copy(mic = it) }
-                SettingSwitch(Icons.Rounded.Videocam, "Camera", s.camera) { s = s.copy(camera = it) }
                 SettingSwitch(Icons.Rounded.Folder, "Storage", s.storage) { s = s.copy(storage = it) }
                 SettingSwitch(Icons.Rounded.ContentPaste, "Clipboard", s.clipboard) { s = s.copy(clipboard = it) }
             }
