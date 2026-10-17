@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/addin.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/input.h>
 #include <freerdp/settings.h>
@@ -54,6 +55,14 @@ static void callStr(jmethodID m, const char *s) {
     jstring j = (*E)->NewStringUTF(E, s);
     (*E)->CallVoidMethod(E, self, m, j);
     (*E)->DeleteLocalRef(E, j);
+}
+
+static void addStatic(rdpSettings *s, const char *a, const char *b) {
+    const char *argv[2] = { a, b };
+    ADDIN_ARGV *ch;
+    if (freerdp_static_channel_collection_find(s, a)) return;
+    ch = freerdp_addin_argv_new(b ? 2 : 1, argv);
+    if (ch) freerdp_static_channel_collection_add(s, ch);
 }
 
 static void push(void) {
@@ -190,7 +199,7 @@ static BOOL pre(freerdp *i) {
     freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, TRUE);
     if (freerdp_client_load_addins) {
         if (!freerdp_client_load_addins(i->context->channels, s))
-            callStr(mLog, "Clipboard channel could not be loaded");
+            callStr(mLog, "Channels could not be loaded");
     }
     return TRUE;
 }
@@ -229,7 +238,7 @@ static void reportError(void) {
 
 JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     JNIEnv *e, jobject t, jstring jh, jint port, jstring ju, jstring jp, jstring jg,
-    jboolean adm, jint w, jint h, jobject b) {
+    jboolean adm, jint audio, jint w, jint h, jobject b) {
     E = e;
     self = (*e)->NewGlobalRef(e, t);
     bmp = (*e)->NewGlobalRef(e, b);
@@ -323,6 +332,10 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, FALSE);
     freerdp_settings_set_bool(s, FreeRDP_IgnoreCertificate, FALSE);
     freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_AudioPlayback, audio == 0 ? TRUE : FALSE);
+    freerdp_settings_set_bool(s, FreeRDP_RemoteConsoleAudio, audio == 1 ? TRUE : FALSE);
+    freerdp_settings_set_bool(s, FreeRDP_AudioCapture, FALSE);
+    if (audio == 0) addStatic(s, "rdpsnd", "sys:opensles");
     if (gw[0] != 0) {
         freerdp_settings_set_string(s, FreeRDP_GatewayHostname, gw);
         freerdp_settings_set_bool(s, FreeRDP_GatewayEnabled, TRUE);
