@@ -1,13 +1,17 @@
 package com.example.wsr
 
+import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -48,6 +52,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.GridView
@@ -108,6 +113,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -127,6 +133,7 @@ fun SessionScreen(
     server: Server,
     all: List<Server>,
     onOs: (String) -> Unit,
+    onRes: (Int, Int, Int, Int) -> Unit,
     onExit: () -> Unit,
     onSwitch: (Server) -> Unit
 ) {
@@ -138,7 +145,10 @@ fun SessionScreen(
         onDispose { a.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
     }
 
-    val client = remember(server.id) { FreeRdpClient() }
+    val storageDir = remember {
+        (ctx.getExternalFilesDir(null) ?: ctx.filesDir).resolve("Shared").also { it.mkdirs() }.absolutePath
+    }
+    val client = remember(server.id) { FreeRdpClient().also { it.storageDir = storageDir } }
     var state by remember(server.id) { mutableStateOf<State>(State.Connecting) }
     var log by remember(server.id) { mutableStateOf("Starting connection...") }
     var frame by remember(server.id) { mutableStateOf<Bitmap?>(null) }
@@ -149,15 +159,43 @@ fun SessionScreen(
     var showServers by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
-    var cx by remember { mutableIntStateOf(640) }
-    var cy by remember { mutableIntStateOf(360) }
+
+    var resW by remember(server.id) { mutableIntStateOf(server.resW) }
+    var resH by remember(server.id) { mutableIntStateOf(server.resH) }
+    var maxW by remember(server.id) { mutableIntStateOf(server.maxW) }
+    var gw by remember(server.id) { mutableIntStateOf(server.resW) }
+    var gh by remember(server.id) { mutableIntStateOf(server.resH) }
+    var restarting by remember(server.id) { mutableStateOf(false) }
+    var cx by remember(server.id) { mutableIntStateOf(server.resW / 2) }
+    var cy by remember(server.id) { mutableIntStateOf(server.resH / 2) }
+
+    val hasMic = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+    var micGranted by remember(server.id) { mutableStateOf(hasMic) }
+    var ready by remember(server.id) { mutableStateOf(!server.mic || hasMic) }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        micGranted = it
+        ready = true
+    }
+    LaunchedEffect(server.id) {
+        if (!ready) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
 
     val onMove: (Float, Float) -> Unit = { dx, dy ->
         val ix = dx.toInt()
         val iy = dy.toInt()
-        cx = (cx + ix).coerceIn(0, 1279)
-        cy = (cy + iy).coerceIn(0, 719)
+        cx = (cx + ix).coerceIn(0, gw - 1)
+        cy = (cy + iy).coerceIn(0, gh - 1)
         client.mouseMove(ix.toFloat(), iy.toFloat())
+    }
+
+    val applyRes: (Int) -> Unit = { w ->
+        if (w != resW) {
+            showSettings = false
+            restarting = true
+            resW = w
+            resH = Res.h(w)
+        }
     }
 
     BackHandler {
@@ -174,28 +212,57 @@ fun SessionScreen(
         onDispose { cm.removePrimaryClipChangedListener(l) }
     }
 
-    DisposableEffect(server.id, retry) {
+    DisposableEffect(server.id, retry, ready, resW, resH) {
+        if (!ready) return@DisposableEffect onDispose { }
         state = State.Connecting
         log = "Starting connection..."
-        cx = 640
-        cy = 360
-        client.connect(server, object : RdpListener {
-            override fun onLog(msg: String) { log = msg }
-            override fun onCertificate(fingerprint: String, accept: (Boolean) -> Unit) { cert = fingerprint to accept }
-            override fun onError(code: String) { state = State.Error(code) }
-            override fun onConnected(osName: String) { onOs(osName); state = State.Connected }
-            override fun onFrame(bmp: Bitmap) { frame = bmp }
-            override fun onClipboard(text: String) {
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("rdp", text))
+        cx = resW / 2
+        cy = resH / 2
+        client.connect(
+            server.copy(resW = resW, resH = resH, mic = server.mic && micGranted),
+            object : RdpListener {
+                override fun onLog(msg: String) { log = msg }
+                override fun onCertificate(fingerprint: String, accept: (Boolean) -> Unit) {
+                    cert = fingerprint to accept
+                }
+                override fun onError(code: String) {
+                    restarting = false
+                    state = State.Error(code)
+                }
+                override fun onConnected(osName: String) {
+                    onOs(osName)
+                    restarting = false
+                    state = State.Connected
+                }
+                override fun onFrame(bmp: Bitmap) { frame = bmp }
+                override fun onClipboard(text: String) {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("rdp", text))
+                }
+                override fun onResolution(w: Int, h: Int) {
+                    gw = w
+                    gh = h
+                    cx = w / 2
+                    cy = h / 2
+                    val limited = w < resW || h < resH
+                    val newMax = if (limited) Res.snapMax(w).coerceAtLeast(Res.MIN_W) else maxW
+                    maxW = newMax
+                    val keepW = minOf(resW, newMax)
+                    onRes(keepW, Res.h(keepW), newMax, Res.h(newMax))
+                }
             }
-        })
+        )
         onDispose { client.disconnect() }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (val st = state) {
-            State.Connecting -> ConnectingScreen(log) {
+            State.Connecting -> ConnectingScreen(
+                title = if (restarting) "Restarting ..." else "Connecting to the server ...",
+                status = if (restarting) "Changing the server screen resolution, please wait ..." else log,
+                button = if (restarting) "Cancel" else "Back to main menu",
+                cancel = restarting
+            ) {
                 client.disconnect()
                 onExit()
             }
@@ -216,9 +283,9 @@ fun SessionScreen(
                             )
                         }
                         Canvas(Modifier.fillMaxSize()) {
-                            val sc = minOf(size.width / 1280f, size.height / 720f)
-                            val ox = (size.width - 1280f * sc) / 2f
-                            val oy = (size.height - 720f * sc) / 2f
+                            val sc = minOf(size.width / gw.toFloat(), size.height / gh.toFloat())
+                            val ox = (size.width - gw * sc) / 2f
+                            val oy = (size.height - gh * sc) / 2f
                             val px = ox + cx * sc
                             val py = oy + cy * sc
                             val k = density * 1.2f * Prefs.cursorSize
@@ -367,7 +434,13 @@ fun SessionScreen(
             onDismissRequest = { showSettings = false },
             icon = { Icon(Icons.Rounded.Settings, null) },
             title = { Text("Settings") },
-            text = { SettingsPage(inDialog = true) },
+            text = {
+                Column {
+                    SectionTitle("Screen")
+                    SettingsGroup { ResolutionRow(resW, maxW) { applyRes(it) } }
+                    SettingsPage(inDialog = true)
+                }
+            },
             confirmButton = { TextButton({ showSettings = false }) { Text("Close") } }
         )
     }
@@ -409,7 +482,13 @@ private fun ExpressiveLoader(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ConnectingScreen(status: String, onBack: () -> Unit) {
+private fun ConnectingScreen(
+    title: String,
+    status: String,
+    button: String,
+    cancel: Boolean,
+    onBack: () -> Unit
+) {
     val cs = MaterialTheme.colorScheme
     Box(
         Modifier.fillMaxSize().background(
@@ -424,7 +503,7 @@ private fun ConnectingScreen(status: String, onBack: () -> Unit) {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                "Connecting to the server ...",
+                title,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = cs.onSurface,
@@ -444,9 +523,9 @@ private fun ConnectingScreen(status: String, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(16.dp))
             FilledTonalButton(onBack, Modifier.height(48.dp)) {
-                Icon(Icons.Rounded.Home, null, Modifier.size(18.dp))
+                Icon(if (cancel) Icons.Rounded.Close else Icons.Rounded.Home, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Back to main menu")
+                Text(button)
             }
         }
     }
