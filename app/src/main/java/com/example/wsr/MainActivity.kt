@@ -77,23 +77,26 @@ fun App() {
                 }
             } else {
                 when (val s = screen) {
-                    Screen.Tabs -> MainTabs(
-                        servers = servers,
-                        onCreate = { screen = Screen.Form(null) },
-                        onLaunch = { screen = Screen.Session(it) },
-                        onFav = { sv ->
-                            val i = servers.indexOfFirst { it.id == sv.id }
-                            if (i >= 0) {
-                                servers[i] = sv.copy(favorite = !sv.favorite)
+                    Screen.Tabs -> {
+                        MainTabs(
+                            servers = servers,
+                            onCreate = { screen = Screen.Form(null) },
+                            onLaunch = { screen = Screen.Session(it) },
+                            onFav = { sv ->
+                                val i = servers.indexOfFirst { it.id == sv.id }
+                                if (i >= 0) {
+                                    servers[i] = sv.copy(favorite = !sv.favorite)
+                                    persist()
+                                }
+                            },
+                            onEdit = { screen = Screen.Form(it) },
+                            onDelete = {
+                                servers.removeAll { x -> x.id == it.id }
                                 persist()
                             }
-                        },
-                        onEdit = { screen = Screen.Form(it) },
-                        onDelete = {
-                            servers.removeAll { x -> x.id == it.id }
-                            persist()
-                        }
-                    )
+                        )
+                        UpdateHost()
+                    }
                     is Screen.Form -> {
                         BackHandler { screen = Screen.Tabs }
                         ServerForm(s.server, { screen = Screen.Tabs }) { n ->
