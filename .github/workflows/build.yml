@@ -18,12 +18,12 @@ jobs:
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;$NDK_VER" "cmake;3.22.1"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: cache
         with:
           path: deps
-          key: deps-v4-static
-          restore-keys: deps-v4-
+          key: deps-v5-static
+          restore-keys: deps-v5-
       - name: Build OpenSSL and FreeRDP
         if: steps.cache.outputs.cache-matched-key == ''
         run: |
@@ -56,6 +56,7 @@ jobs:
             -DCHANNEL_RDPDR=ON -DCHANNEL_RDPDR_CLIENT=ON \
             -DCHANNEL_DRIVE=ON -DCHANNEL_DRIVE_CLIENT=ON \
             -DCHANNEL_DRDYNVC=ON -DCHANNEL_DRDYNVC_CLIENT=ON \
+            -DCHANNEL_REMDESK=OFF -DCHANNEL_REMDESK_CLIENT=OFF \
             -DWITH_OPENSLES=ON \
             -DWITH_SERVER=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF \
             -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF \
@@ -68,6 +69,11 @@ jobs:
             -DWITH_INTERNAL_MD4=ON -DWITH_INTERNAL_MD5=ON -DWITH_INTERNAL_RC4=ON
           cmake --build build -j4
           cmake --install build
+      - uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-matched-key == ''
+        with:
+          path: deps
+          key: deps-v5-static
       - name: Restore signing key
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
