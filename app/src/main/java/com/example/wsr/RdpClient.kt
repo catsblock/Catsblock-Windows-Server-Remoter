@@ -15,6 +15,7 @@ interface RdpListener {
     fun onConnected(osName: String)
     fun onFrame(bmp: Bitmap)
     fun onClipboard(text: String) {}
+    fun onResolution(w: Int, h: Int) {}
 }
 
 interface RdpClient {
@@ -29,20 +30,25 @@ interface RdpClient {
 }
 
 class FreeRdpClient : RdpClient {
+    var storageDir: String = ""
     private val timeoutSec = 300
     private val main = Handler(Looper.getMainLooper())
     private var listener: RdpListener? = null
     private var bitmap: Bitmap? = null
+    private var worker: Thread? = null
+    @Volatile private var gen = 0
     @Volatile private var live = false
     @Volatile private var ticking = false
     @Volatile private var connected = false
+    @Volatile private var clipOn = true
     @Volatile private var stage = ""
     @Volatile private var lastClip = ""
     private var startTime = 0L
 
     private external fun nativeRun(
         host: String, port: Int, user: String, pass: String, gateway: String,
-        admin: Boolean, audio: Int, w: Int, h: Int, bmp: Bitmap
+        admin: Boolean, audio: Int, mic: Boolean, storage: String, clip: Boolean,
+        w: Int, h: Int, bmp: Bitmap
     )
     private external fun nativeStop()
     private external fun nativeMove(dx: Int, dy: Int)
@@ -64,6 +70,10 @@ class FreeRdpClient : RdpClient {
         main.post { if (live) l?.onError("$s (stage: $stage)") }
     }
 
+    fun jRes(w: Int, h: Int) {
+        main.post { if (live) listener?.onResolution(w, h) }
+    }
+
     fun jOk() {
         ticking = false
         connected = true
@@ -78,6 +88,7 @@ class FreeRdpClient : RdpClient {
     }
 
     fun jClip(text: String) {
+        if (!clipOn) return
         lastClip = text
         main.post { if (live) listener?.onClipboard(text) }
     }
@@ -99,13 +110,15 @@ class FreeRdpClient : RdpClient {
         live = true
         ticking = true
         connected = false
+        clipOn = s.clipboard
+        val g = ++gen
         startTime = System.currentTimeMillis()
         stage = "Starting connection"
         l.onLog("$stage\n0s / ${timeoutSec}s")
 
         val ticker = object : Runnable {
             override fun run() {
-                if (!ticking || !live) return
+                if (!ticking || !live || g != gen) return
                 val sec = (System.currentTimeMillis() - startTime) / 1000
                 l.onLog("$stage\n${sec}s / ${timeoutSec}s")
                 main.postDelayed(this, 1000)
@@ -120,21 +133,31 @@ class FreeRdpClient : RdpClient {
             port = host.substring(idx + 1).toInt()
             host = host.substring(0, idx)
         }
-        val bmp = Bitmap.createBitmap(1280, 720, Bitmap.Config.ARGB_8888)
+        val rw = s.resW.coerceIn(640, 3840)
+        val rh = s.resH.coerceIn(360, 2160)
+        val bmp = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888)
         bmp.setHasAlpha(false)
         bitmap = bmp
         val gw = s.gateway.trim()
         val audio = s.audio.coerceIn(0, 2)
+        val storage = if (s.storage) storageDir else ""
+        val prev = worker
 
-        Thread {
+        val t = Thread {
             try {
+                prev?.join()
                 System.loadLibrary("wsr")
-                nativeRun(host, port, s.user, s.password, gw, s.admin, audio, 1280, 720, bmp)
+                nativeRun(
+                    host, port, s.user, s.password, gw, s.admin, audio,
+                    s.mic, storage, s.clipboard, rw, rh, bmp
+                )
             } catch (e: Throwable) {
                 ticking = false
-                if (live) main.post { l.onError("${e.javaClass.simpleName}: ${e.message} (stage: $stage)") }
+                if (live && g == gen) main.post { l.onError("${e.javaClass.simpleName}: ${e.message} (stage: $stage)") }
             }
-        }.start()
+        }
+        worker = t
+        t.start()
     }
 
     override fun disconnect() {
@@ -148,7 +171,7 @@ class FreeRdpClient : RdpClient {
     }
 
     override fun setClipboard(text: String) {
-        if (!connected || text == lastClip) return
+        if (!connected || !clipOn || text == lastClip) return
         lastClip = text
         Thread { try { nativeSetClip(text) } catch (_: Throwable) {} }.start()
     }
