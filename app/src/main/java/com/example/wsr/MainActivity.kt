@@ -116,6 +116,13 @@ fun App() {
                                 persist()
                             }
                         },
+                        onRes = { w, h, mw, mh ->
+                            val i = servers.indexOfFirst { it.id == s.server.id }
+                            if (i >= 0) {
+                                servers[i] = servers[i].copy(resW = w, resH = h, maxW = mw, maxH = mh)
+                                persist()
+                            }
+                        },
                         onExit = { screen = Screen.Tabs },
                         onSwitch = { screen = Screen.Session(it) }
                     )
@@ -161,7 +168,7 @@ fun Welcome(onContinue: () -> Unit) {
                 colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerHigh)
             ) {
                 Text(
-                    "Welcome to Windows Server Remoter! You can use a server's IP address, name, and password to access Windows from your home or mobile device! But remember, all responsibilities for the windows and server that you created are entirely your responsibility. The creator is not allowed to see ur servers or view the current screen of ur server.",
+                    "Welcome to Windows Server Remoter! You can use a server's IP address, name, and password to access Windows from your home or mobile device! But remember, all responsibilities for the windows and server that you created are entirely your responsibility. The creator is not allowed to see any of their servers or view the current screen of their server.",
                     Modifier.padding(20.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     color = cs.onSurfaceVariant
