@@ -8,4 +8,4 @@ target_include_directories(wsr PRIVATE
     ${WSR_DEPS}/include/winpr3)
 target_link_libraries(wsr
     -Wl,--start-group ${WSR_LIBS} -Wl,--end-group
-    log android jnigraphics z m)
+    log android jnigraphics OpenSLES z m)
