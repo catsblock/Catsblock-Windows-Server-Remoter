@@ -24,7 +24,11 @@ data class Server(
     val storage: Boolean = false,
     val clipboard: Boolean = true,
     val favorite: Boolean = false,
-    val os: String = "Windows"
+    val os: String = "Windows",
+    val resW: Int = 1280,
+    val resH: Int = 720,
+    val maxW: Int = 2560,
+    val maxH: Int = 1440
 ) {
     val title get() = friendly.ifBlank { host }
 
@@ -33,14 +37,29 @@ data class Server(
         .put("friendly", friendly).put("admin", admin).put("swap", swapMouse)
         .put("gateway", gateway).put("audio", audio).put("mic", mic).put("camera", camera)
         .put("storage", storage).put("clipboard", clipboard).put("fav", favorite).put("os", os)
+        .put("resW", resW).put("resH", resH).put("maxW", maxW).put("maxH", maxH)
 
     companion object {
         fun from(o: JSONObject) = Server(
-            o.getString("id"), o.getString("host"), o.getString("user"),
-            o.getString("password"), o.getString("friendly"), o.getBoolean("admin"),
-            o.getBoolean("swap"), o.getString("gateway"), o.getInt("audio"),
-            o.getBoolean("mic"), o.getBoolean("camera"), o.getBoolean("storage"),
-            o.getBoolean("clipboard"), o.getBoolean("fav"), o.getString("os")
+            id = o.getString("id"),
+            host = o.getString("host"),
+            user = o.getString("user"),
+            password = o.getString("password"),
+            friendly = o.getString("friendly"),
+            admin = o.getBoolean("admin"),
+            swapMouse = o.getBoolean("swap"),
+            gateway = o.getString("gateway"),
+            audio = o.getInt("audio"),
+            mic = o.getBoolean("mic"),
+            camera = o.getBoolean("camera"),
+            storage = o.getBoolean("storage"),
+            clipboard = o.getBoolean("clipboard"),
+            favorite = o.getBoolean("fav"),
+            os = o.getString("os"),
+            resW = o.optInt("resW", 1280),
+            resH = o.optInt("resH", 720),
+            maxW = o.optInt("maxW", 2560),
+            maxH = o.optInt("maxH", 1440)
         )
     }
 }
