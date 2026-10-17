@@ -11,22 +11,33 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,13 +50,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -162,35 +179,94 @@ private fun mb(b: Long) = String.format("%.1f", b / 1048576.0)
 @Composable
 private fun WavyProgress(progress: Float, modifier: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
+    val track = cs.secondaryContainer
+    val main = cs.primary
     val t = rememberInfiniteTransition(label = "wave")
     val phase by t.animateFloat(
         0f, (2 * PI).toFloat(),
         infiniteRepeatable(tween(1400, easing = LinearEasing)),
         label = "phase"
     )
-    Canvas(modifier.fillMaxWidth().height(20.dp)) {
+    Canvas(modifier.fillMaxWidth().height(30.dp)) {
         val w = size.width
         val mid = size.height / 2f
         val stroke = 5.dp.toPx()
-        val amp = size.height / 2f - stroke
-        val wave = 28.dp.toPx()
-        val end = w * progress.coerceIn(0f, 1f)
-        if (end < w) {
-            drawLine(
-                cs.secondaryContainer,
-                Offset(end, mid), Offset(w, mid),
-                strokeWidth = stroke, cap = StrokeCap.Round
-            )
+        val amp = size.height / 2f - stroke - 3.dp.toPx()
+        val wave = 30.dp.toPx()
+        val gap = 8.dp.toPx()
+        val end = (w * progress.coerceIn(0f, 1f))
+        val lineX = end.coerceIn(2.dp.toPx(), w - 2.dp.toPx())
+
+        val trackStart = (lineX + gap).coerceAtMost(w)
+        if (trackStart < w) {
+            drawLine(track, Offset(trackStart, mid), Offset(w, mid), strokeWidth = stroke, cap = StrokeCap.Round)
         }
-        if (end > 0f) {
+        val waveEnd = (lineX - gap).coerceAtLeast(0f)
+        if (waveEnd > 0f) {
             val p = Path()
             var x = 0f
             p.moveTo(0f, mid + amp * sin(-phase))
-            while (x < end) {
-                x = (x + 2f).coerceAtMost(end)
+            while (x < waveEnd) {
+                x = (x + 2f).coerceAtMost(waveEnd)
                 p.lineTo(x, mid + amp * sin((x / wave) * 2f * PI.toFloat() - phase))
             }
-            drawPath(p, cs.primary, style = Stroke(stroke, cap = StrokeCap.Round))
+            drawPath(p, main, style = Stroke(stroke, cap = StrokeCap.Round))
+        }
+        drawLine(
+            main,
+            Offset(lineX, 3.dp.toPx()), Offset(lineX, size.height - 3.dp.toPx()),
+            strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round
+        )
+    }
+}
+
+@Composable
+private fun UpdateCard(
+    icon: ImageVector,
+    title: String,
+    onDismiss: (() -> Unit)?,
+    content: @Composable ColumnScope.() -> Unit,
+    actions: @Composable RowScope.() -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    Dialog(
+        onDismissRequest = { onDismiss?.invoke() },
+        properties = DialogProperties(
+            dismissOnBackPress = onDismiss != null,
+            dismissOnClickOutside = onDismiss != null,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            Modifier.padding(24.dp).widthIn(max = 420.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(36.dp),
+            color = cs.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(72.dp).clip(RoundedCornerShape(26.dp)).background(cs.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, null, Modifier.size(36.dp), tint = cs.onPrimaryContainer)
+                }
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(12.dp))
+                content()
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actions
+                )
+            }
         }
     }
 }
@@ -198,6 +274,7 @@ private fun WavyProgress(progress: Float, modifier: Modifier = Modifier) {
 @Composable
 fun UpdateHost() {
     val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val lifecycle = (ctx as ComponentActivity).lifecycle
     val file = remember { File(ctx.cacheDir, "update.apk") }
@@ -252,81 +329,111 @@ fun UpdateHost() {
 
     val i = info
     if (i == null || phase == -1) return
-    val locked = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+    val body = MaterialTheme.typography.bodyLarge
 
     when (phase) {
-        0 -> AlertDialog(
-            onDismissRequest = { phase = -1 },
-            icon = { Icon(Icons.Rounded.SystemUpdate, null) },
-            title = { Text("The app has received a new update.") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("This app has received a new update. Update to receive more features and bug fixes.")
+        0 -> UpdateCard(
+            icon = Icons.Rounded.SystemUpdate,
+            title = "The app has received a new update.",
+            onDismiss = { phase = -1 },
+            content = {
+                Text(
+                    "This app has received a new update. Update to receive more features and bug fixes.",
+                    style = body, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(18.dp))
+                Surface(shape = CircleShape, color = cs.secondaryContainer) {
                     Text(
                         "${mb(i.size)} MB — Version: ${i.name}",
+                        Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
+                        fontWeight = FontWeight.SemiBold,
+                        color = cs.onSecondaryContainer
                     )
                 }
             },
-            confirmButton = { TextButton({ download() }) { Text("Download") } },
-            dismissButton = { TextButton({ phase = -1 }) { Text("After") } }
+            actions = {
+                TextButton({ phase = -1 }, Modifier.height(48.dp)) { Text("After") }
+                Button({ download() }, Modifier.height(48.dp)) { Text("Download") }
+            }
         )
-        1 -> AlertDialog(
-            onDismissRequest = {},
-            properties = locked,
-            icon = { Icon(Icons.Rounded.SystemUpdate, null) },
-            title = { Text("Updating...") },
-            text = {
-                Column {
-                    Text("We are updating your app. You will need to enable app installation if you haven't already enabled this permission.")
-                    Spacer(Modifier.height(20.dp))
-                    WavyProgress(if (i.size > 0) done.toFloat() / i.size else 0f)
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("${mb(done)} / ${mb(i.size)} MB downloaded", style = MaterialTheme.typography.labelMedium)
-                        Text("Version: ${i.name}", style = MaterialTheme.typography.labelMedium)
-                    }
+        1 -> UpdateCard(
+            icon = Icons.Rounded.SystemUpdate,
+            title = "Updating...",
+            onDismiss = null,
+            content = {
+                Text(
+                    "We are updating your app. You will need to enable app installation if you haven't already enabled this permission.",
+                    style = body, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
+                val pct = if (i.size > 0) (done * 100 / i.size).toInt() else 0
+                Text(
+                    "$pct%",
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = cs.primary
+                )
+                Spacer(Modifier.height(10.dp))
+                WavyProgress(if (i.size > 0) done.toFloat() / i.size else 0f)
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        "${mb(done)} / ${mb(i.size)} MB downloaded",
+                        style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant
+                    )
+                    Text(
+                        "Version: ${i.name}",
+                        style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant
+                    )
                 }
             },
-            confirmButton = {}
+            actions = {}
         )
-        2 -> AlertDialog(
-            onDismissRequest = {},
-            properties = locked,
-            icon = { Icon(Icons.Rounded.SystemUpdate, null) },
-            title = { Text("Updating...") },
-            text = { Text("Download finished. Allow this app to install other apps, then come back to finish the update.") },
-            confirmButton = {
-                TextButton({
+        2 -> UpdateCard(
+            icon = Icons.Rounded.SystemUpdate,
+            title = "Updating...",
+            onDismiss = null,
+            content = {
+                Text(
+                    "Download finished. Allow this app to install other apps, then come back to finish the update.",
+                    style = body, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                )
+            },
+            actions = {
+                TextButton({ phase = -1 }, Modifier.height(48.dp)) { Text("After") }
+                Button({
                     ctx.startActivity(
                         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
                     )
-                }) { Text("Open settings") }
-            },
-            dismissButton = { TextButton({ phase = -1 }) { Text("After") } }
+                }, Modifier.height(48.dp)) { Text("Open settings") }
+            }
         )
-        3 -> AlertDialog(
-            onDismissRequest = {},
-            properties = locked,
-            icon = { Icon(Icons.Rounded.SystemUpdate, null) },
-            title = { Text("Updating...") },
-            text = {
-                Column {
-                    Text("Installing version ${i.name}...")
-                    Spacer(Modifier.height(20.dp))
-                    WavyProgress(1f)
-                }
+        3 -> UpdateCard(
+            icon = Icons.Rounded.SystemUpdate,
+            title = "Updating...",
+            onDismiss = null,
+            content = {
+                Text(
+                    "Installing version ${i.name}...",
+                    style = body, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
+                WavyProgress(1f)
             },
-            confirmButton = {}
+            actions = {}
         )
-        else -> AlertDialog(
-            onDismissRequest = { phase = -1 },
-            icon = { Icon(Icons.Rounded.SystemUpdate, null) },
-            title = { Text("Update failed") },
-            text = { Text(err) },
-            confirmButton = { TextButton({ download() }) { Text("Try again") } },
-            dismissButton = { TextButton({ phase = -1 }) { Text("After") } }
+        else -> UpdateCard(
+            icon = Icons.Rounded.ErrorOutline,
+            title = "Update failed",
+            onDismiss = { phase = -1 },
+            content = {
+                Text(err, style = body, color = cs.onSurfaceVariant, textAlign = TextAlign.Center)
+            },
+            actions = {
+                TextButton({ phase = -1 }, Modifier.height(48.dp)) { Text("After") }
+                Button({ download() }, Modifier.height(48.dp)) { Text("Try again") }
+            }
         )
     }
 }
