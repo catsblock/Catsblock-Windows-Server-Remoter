@@ -22,8 +22,8 @@ jobs:
         id: cache
         with:
           path: deps
-          key: deps-v3-static
-          restore-keys: deps-v3-
+          key: deps-v4-static
+          restore-keys: deps-v4-
       - name: Build OpenSSL and FreeRDP
         if: steps.cache.outputs.cache-matched-key == ''
         run: |
@@ -51,7 +51,12 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_TESTING=OFF \
             -DWITH_CLIENT=OFF -DWITH_CLIENT_COMMON=ON -DWITH_CLIENT_CHANNELS=ON \
             -DCHANNEL_CLIPRDR=ON -DCHANNEL_CLIPRDR_CLIENT=ON \
-            -DCHANNEL_RDPSND=ON -DCHANNEL_RDPSND_CLIENT=ON -DWITH_OPENSLES=ON \
+            -DCHANNEL_RDPSND=ON -DCHANNEL_RDPSND_CLIENT=ON \
+            -DCHANNEL_AUDIN=ON -DCHANNEL_AUDIN_CLIENT=ON \
+            -DCHANNEL_RDPDR=ON -DCHANNEL_RDPDR_CLIENT=ON \
+            -DCHANNEL_DRIVE=ON -DCHANNEL_DRIVE_CLIENT=ON \
+            -DCHANNEL_DRDYNVC=ON -DCHANNEL_DRDYNVC_CLIENT=ON \
+            -DWITH_OPENSLES=ON \
             -DWITH_SERVER=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF \
             -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF \
             -DWITH_SERVER_CHANNELS=OFF -DWITH_PLATFORM_SERVER=OFF -DWITH_X11=OFF \
