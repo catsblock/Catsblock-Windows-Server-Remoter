@@ -8,9 +8,17 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -26,24 +34,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Computer
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +86,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
@@ -84,6 +103,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -111,6 +131,7 @@ fun SessionScreen(
     onSwitch: (Server) -> Unit
 ) {
     val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
     DisposableEffect(Unit) {
         val a = ctx as Activity
         a.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -174,27 +195,11 @@ fun SessionScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (val st = state) {
-            State.Connecting -> Text(
-                log,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.align(Alignment.Center).padding(24.dp)
-            )
-            is State.Error -> Column(
-                Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    "The connection was interrupted. Error: ${st.code}",
-                    color = Color.White,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton({ onExit() }) { Text("Home page") }
-                    Button({ retry++ }) { Text("Try Again") }
-                }
+            State.Connecting -> ConnectingScreen(log) {
+                client.disconnect()
+                onExit()
             }
+            is State.Error -> ErrorScreen(st.code, onHome = { onExit() }, onRetry = { retry++ })
             State.Connected -> {
                 Box(
                     Modifier.fillMaxSize()
@@ -232,71 +237,85 @@ fun SessionScreen(
                         }
                     }
                 }
-                if (Prefs.joystick) {
-                    Joystick(client, Modifier.align(Alignment.BottomStart).padding(16.dp))
-                }
-                if (Prefs.scrollButtons) {
-                    Column(
-                        Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+
+                Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    if (Prefs.joystick) {
+                        Joystick(client, Modifier.align(Alignment.BottomStart).padding(16.dp))
+                    }
+                    if (Prefs.scrollButtons) {
+                        Column(
+                            Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            ScrollKey(Icons.Rounded.KeyboardArrowUp, 1, client)
+                            ScrollKey(Icons.Rounded.KeyboardArrowDown, -1, client)
+                        }
+                    }
+                    if (Prefs.mouseButtons) {
+                        val l = if (server.swapMouse) 1 else 0
+                        val r = if (server.swapMouse) 0 else 1
+                        Row(
+                            Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 72.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            MouseKey("Left", l, client, cs.primaryContainer, cs.onPrimaryContainer)
+                            MouseKey("Right", r, client, cs.secondaryContainer, cs.onSecondaryContainer)
+                        }
+                    }
+                    if (Prefs.space) {
+                        Box(
+                            Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                                .size(width = 110.dp, height = 44.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(cs.secondaryContainer.copy(alpha = 0.85f))
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        awaitFirstDown(requireUnconsumed = false)
+                                        client.key(KeyEvent.KEYCODE_SPACE, true)
+                                        waitForUpOrCancellation()
+                                        client.key(KeyEvent.KEYCODE_SPACE, false)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Space",
+                                color = cs.onSecondaryContainer,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Surface(
+                        Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+                        shape = CircleShape,
+                        color = cs.surfaceContainerHigh.copy(alpha = Prefs.barAlpha.coerceIn(0.1f, 1f))
                     ) {
-                        ScrollKey(Icons.Default.KeyboardArrowUp, 1, client)
-                        ScrollKey(Icons.Default.KeyboardArrowDown, -1, client)
+                        Row(
+                            Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            BarIcon(Icons.Rounded.GridView) { showServers = true }
+                            BarIcon(Icons.Rounded.ZoomIn) { zoom = if (zoom >= 2f) 1f else zoom + 0.5f }
+                            BarIcon(Icons.Rounded.Settings) { showSettings = true }
+                            BarIcon(Icons.Rounded.Keyboard) {
+                                showKeys = !showKeys
+                                if (!showKeys) showPhoneKb = false
+                            }
+                        }
                     }
-                }
-                if (Prefs.mouseButtons) {
-                    val l = if (server.swapMouse) 1 else 0
-                    val r = if (server.swapMouse) 0 else 1
-                    Row(
-                        Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 72.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        MouseKey("Left", l, client)
-                        MouseKey("Right", r, client)
+
+                    if (showKeys) {
+                        KeyPanel(
+                            client,
+                            showPhoneKb,
+                            { showPhoneKb = !showPhoneKb },
+                            Modifier.align(Alignment.BottomCenter)
+                        )
                     }
+                    if (showPhoneKb) PhoneKeyboard(client)
                 }
-                if (Prefs.space) {
-                    Box(
-                        Modifier.align(Alignment.BottomEnd).padding(16.dp)
-                            .size(width = 110.dp, height = 44.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f))
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    awaitFirstDown(requireUnconsumed = false)
-                                    client.key(KeyEvent.KEYCODE_SPACE, true)
-                                    waitForUpOrCancellation()
-                                    client.key(KeyEvent.KEYCODE_SPACE, false)
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Space", color = MaterialTheme.colorScheme.onSecondaryContainer)
-                    }
-                }
-                Row(
-                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(32.dp)
-                        .background(Color.Black.copy(alpha = Prefs.barAlpha)),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    BarIcon(Icons.Default.GridView) { showServers = true }
-                    BarIcon(Icons.Default.ZoomIn) { zoom = if (zoom >= 2f) 1f else zoom + 0.5f }
-                    BarIcon(Icons.Default.Settings) { showSettings = true }
-                    BarIcon(Icons.Default.Keyboard) {
-                        showKeys = !showKeys
-                        if (!showKeys) showPhoneKb = false
-                    }
-                }
-                if (showKeys) {
-                    KeyPanel(
-                        client,
-                        showPhoneKb,
-                        { showPhoneKb = !showPhoneKb },
-                        Modifier.align(Alignment.BottomCenter)
-                    )
-                }
-                if (showPhoneKb) PhoneKeyboard(client)
             }
         }
     }
@@ -304,6 +323,7 @@ fun SessionScreen(
     cert?.let { (fp, cb) ->
         AlertDialog(
             onDismissRequest = {},
+            icon = { Icon(Icons.Rounded.Warning, null) },
             title = { Text("Unverified server") },
             text = { Text("This server could not be verified.\nFingerprint: $fp\nConnect anyway?") },
             confirmButton = { TextButton({ cb(true); cert = null }) { Text("Connect") } },
@@ -314,11 +334,27 @@ fun SessionScreen(
     if (showServers) {
         AlertDialog(
             onDismissRequest = { showServers = false },
+            icon = { Icon(Icons.Rounded.GridView, null) },
             title = { Text("Switch server") },
             text = {
-                Column {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     all.forEach {
-                        TextButton({ showServers = false; onSwitch(it) }) { Text(it.title) }
+                        val current = it.id == server.id
+                        Row(
+                            Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
+                                .background(if (current) cs.secondaryContainer else Color.Transparent)
+                                .clickable { showServers = false; onSwitch(it) }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Computer, null, tint = cs.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Text(it.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                            if (current) Icon(Icons.Rounded.Check, null, tint = cs.primary)
+                        }
                     }
                 }
             },
@@ -329,26 +365,138 @@ fun SessionScreen(
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
+            icon = { Icon(Icons.Rounded.Settings, null) },
             title = { Text("Settings") },
-            text = { SettingsPage() },
+            text = { SettingsPage(inDialog = true) },
             confirmButton = { TextButton({ showSettings = false }) { Text("Close") } }
         )
     }
 }
 
 @Composable
-private fun BarIcon(icon: ImageVector, onClick: () -> Unit) {
-    IconButton(onClick, Modifier.size(28.dp)) {
-        Icon(icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+private fun ExpressiveLoader(modifier: Modifier = Modifier) {
+    val cs = MaterialTheme.colorScheme
+    val t = rememberInfiniteTransition(label = "loader")
+    val rot by t.animateFloat(
+        0f, 360f,
+        infiniteRepeatable(tween(4000, easing = LinearEasing)),
+        label = "rot"
+    )
+    val morph by t.animateFloat(
+        0.26f, 0.5f,
+        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "morph"
+    )
+    val pulse by t.animateFloat(
+        0.82f, 1f,
+        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "pulse"
+    )
+    Box(modifier.size(88.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer { rotationZ = rot; scaleX = pulse; scaleY = pulse }
+                .clip(RoundedCornerShape((morph * 100).toInt()))
+                .background(cs.primary)
+        )
+        Box(
+            Modifier.size(40.dp)
+                .graphicsLayer { rotationZ = -rot * 1.5f; scaleX = 1.9f - pulse; scaleY = 1.9f - pulse }
+                .clip(RoundedCornerShape(((0.76f - morph) * 100).toInt()))
+                .background(cs.primaryContainer)
+        )
     }
 }
 
 @Composable
-private fun MouseKey(label: String, button: Int, client: RdpClient) {
+private fun ConnectingScreen(status: String, onBack: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
     Box(
-        Modifier.size(width = 72.dp, height = 48.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.25f))
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(cs.primaryContainer.copy(alpha = 0.7f), cs.background))
+        )
+    ) {
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                "Connecting to the server ...",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = cs.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(20.dp))
+            ExpressiveLoader()
+            Spacer(Modifier.height(20.dp))
+            Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
+                Text(
+                    status,
+                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = cs.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            FilledTonalButton(onBack, Modifier.height(48.dp)) {
+                Icon(Icons.Rounded.Home, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Back to main menu")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorScreen(code: String, onHome: () -> Unit, onRetry: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(cs.errorContainer.copy(alpha = 0.7f), cs.background))
+        )
+    ) {
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(48.dp), tint = cs.error)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "The connection was interrupted. Error: $code",
+                style = MaterialTheme.typography.bodyLarge,
+                color = cs.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onHome, Modifier.height(48.dp)) { Text("Home page") }
+                Button(onRetry, Modifier.height(48.dp)) { Text("Try Again") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BarIcon(icon: ImageVector, onClick: () -> Unit) {
+    IconButton(onClick, Modifier.size(34.dp)) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(19.dp))
+    }
+}
+
+@Composable
+private fun MouseKey(label: String, button: Int, client: RdpClient, container: Color, content: Color) {
+    Box(
+        Modifier.size(width = 76.dp, height = 48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(container.copy(alpha = 0.85f))
             .pointerInput(button) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
@@ -359,14 +507,15 @@ private fun MouseKey(label: String, button: Int, client: RdpClient) {
             },
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = Color.White)
+        Text(label, color = content, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
 private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
+    val cs = MaterialTheme.colorScheme
     Box(
-        Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f))
+        Modifier.size(48.dp).clip(CircleShape).background(cs.surfaceContainerHigh.copy(alpha = 0.75f))
             .pointerInput(dir) {
                 detectTapGestures(onPress = {
                     client.scroll(dir)
@@ -385,7 +534,7 @@ private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
             },
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, null, tint = Color.White)
+        Icon(icon, null, tint = cs.onSurface)
     }
 }
 
@@ -459,6 +608,7 @@ private suspend fun PointerInputScope.touchpad(
 
 @Composable
 private fun Joystick(client: RdpClient, modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
     val size = Prefs.joySize.dp
     var knob by remember { mutableStateOf(Offset.Zero) }
     val active = remember { mutableSetOf<Int>() }
@@ -469,7 +619,7 @@ private fun Joystick(client: RdpClient, modifier: Modifier) {
     }
 
     Box(
-        modifier.size(size).clip(CircleShape).background(Color.White.copy(alpha = 0.2f))
+        modifier.size(size).clip(CircleShape).background(cs.surfaceContainerHigh.copy(alpha = 0.55f))
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragEnd = {
@@ -501,7 +651,7 @@ private fun Joystick(client: RdpClient, modifier: Modifier) {
     ) {
         Box(
             Modifier.offset { IntOffset(knob.x.toInt(), knob.y.toInt()) }
-                .size(size / 3).clip(CircleShape).background(Color.White.copy(alpha = 0.6f))
+                .size(size / 3).clip(CircleShape).background(cs.primary.copy(alpha = 0.9f))
         )
     }
 }
@@ -555,6 +705,7 @@ private fun KeyPanel(
     modifier: Modifier
 ) {
     val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
     val keys = listOf(
         "Win" to KeyEvent.KEYCODE_META_LEFT,
         "Esc" to KeyEvent.KEYCODE_ESCAPE,
@@ -585,8 +736,15 @@ private fun KeyPanel(
     )
     val held = remember { mutableStateListOf<Int>() }
 
-    Surface(modifier.fillMaxWidth(), color = Color.Black.copy(alpha = 0.7f)) {
-        LazyRow(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Surface(
+        modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = cs.surfaceContainer.copy(alpha = 0.95f)
+    ) {
+        LazyRow(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             item {
                 FilterChip(phoneOn, onPhone, { Text("Phone keyboard") })
             }
