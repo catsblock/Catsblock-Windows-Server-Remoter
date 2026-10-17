@@ -15,6 +15,7 @@
 #include <freerdp/client/channels.h>
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/channels/cliprdr.h>
+#include <freerdp/channels/rdpdr.h>
 #include <winpr/synch.h>
 #include <winpr/wlog.h>
 #include <winpr/string.h>
@@ -28,12 +29,12 @@ typedef struct {
 
 static JNIEnv *E;
 static jobject self, bmp;
-static jmethodID mLog, mErr, mOk, mFrame, mCert, mClip;
+static jmethodID mLog, mErr, mOk, mFrame, mCert, mClip, mRes;
 static freerdp *inst;
 static rdpInput *inp;
 static CliprdrClientContext *clip;
 static volatile int running, dirty;
-static int mx, my, W, H;
+static int mx, my, W, H, gClip = 1, provReg = 0;
 static long last;
 static BOOL (*orig)(rdpContext *);
 static char lastLog[512];
@@ -63,6 +64,12 @@ static void addStatic(rdpSettings *s, const char *a, const char *b) {
     if (freerdp_static_channel_collection_find(s, a)) return;
     ch = freerdp_addin_argv_new(b ? 2 : 1, argv);
     if (ch) freerdp_static_channel_collection_add(s, ch);
+}
+
+static void addDynamic(rdpSettings *s, const char *a, const char *b) {
+    const char *argv[2] = { a, b };
+    ADDIN_ARGV *ch = freerdp_addin_argv_new(b ? 2 : 1, argv);
+    if (ch) freerdp_dynamic_channel_collection_add(s, ch);
 }
 
 static void push(void) {
@@ -196,10 +203,12 @@ static void ctxFree(freerdp *i, rdpContext *c) {}
 static BOOL pre(freerdp *i) {
     callStr(mLog, "TCP connected. Negotiating security (NLA/TLS)");
     rdpSettings *s = i->context->settings;
-    freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, gClip ? TRUE : FALSE);
     if (freerdp_client_load_addins) {
         if (!freerdp_client_load_addins(i->context->channels, s))
             callStr(mLog, "Channels could not be loaded");
+    } else {
+        callStr(mLog, "Channel loader not linked");
     }
     return TRUE;
 }
@@ -238,7 +247,8 @@ static void reportError(void) {
 
 JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     JNIEnv *e, jobject t, jstring jh, jint port, jstring ju, jstring jp, jstring jg,
-    jboolean adm, jint audio, jint w, jint h, jobject b) {
+    jboolean adm, jint audio, jboolean mic, jstring jst, jboolean clipOn,
+    jint w, jint h, jobject b) {
     E = e;
     self = (*e)->NewGlobalRef(e, t);
     bmp = (*e)->NewGlobalRef(e, b);
@@ -247,6 +257,7 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     mx = w / 2;
     my = h / 2;
     clip = NULL;
+    gClip = clipOn ? 1 : 0;
     lastLog[0] = 0;
     setenv("HOME", "/data/data/com.example.wsr/files", 1);
     setenv("XDG_CONFIG_HOME", "/data/data/com.example.wsr/files/.config", 1);
@@ -261,6 +272,12 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     mFrame = (*e)->GetMethodID(e, c, "jFrame", "()V");
     mCert = (*e)->GetMethodID(e, c, "jCert", "(Ljava/lang/String;)Z");
     mClip = (*e)->GetMethodID(e, c, "jClip", "(Ljava/lang/String;)V");
+    mRes = (*e)->GetMethodID(e, c, "jRes", "(II)V");
+
+    if (!provReg) {
+        freerdp_register_addin_provider(freerdp_channels_load_static_addin_entry, 0);
+        provReg = 1;
+    }
 
     wLog *root = WLog_GetRoot();
     WLog_SetLogAppenderType(root, WLOG_APPENDER_CALLBACK);
@@ -305,6 +322,7 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     const char *user = (*e)->GetStringUTFChars(e, ju, 0);
     const char *pass = (*e)->GetStringUTFChars(e, jp, 0);
     const char *gw = (*e)->GetStringUTFChars(e, jg, 0);
+    const char *st = (*e)->GetStringUTFChars(e, jst, 0);
 
     char uname[256];
     snprintf(uname, sizeof uname, "%s", user);
@@ -331,11 +349,26 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     freerdp_settings_set_bool(s, FreeRDP_AutoLogonEnabled, TRUE);
     freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, FALSE);
     freerdp_settings_set_bool(s, FreeRDP_IgnoreCertificate, FALSE);
-    freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, TRUE);
+    freerdp_settings_set_bool(s, FreeRDP_RedirectClipboard, gClip ? TRUE : FALSE);
+
     freerdp_settings_set_bool(s, FreeRDP_AudioPlayback, audio == 0 ? TRUE : FALSE);
     freerdp_settings_set_bool(s, FreeRDP_RemoteConsoleAudio, audio == 1 ? TRUE : FALSE);
-    freerdp_settings_set_bool(s, FreeRDP_AudioCapture, FALSE);
+    freerdp_settings_set_bool(s, FreeRDP_AudioCapture, mic ? TRUE : FALSE);
     if (audio == 0) addStatic(s, "rdpsnd", "sys:opensles");
+    if (mic) {
+        freerdp_settings_set_bool(s, FreeRDP_SupportDynamicChannels, TRUE);
+        addStatic(s, "drdynvc", NULL);
+        addDynamic(s, "audin", "sys:opensles");
+    }
+    if (st[0] != 0) {
+        freerdp_settings_set_bool(s, FreeRDP_DeviceRedirection, TRUE);
+        freerdp_settings_set_bool(s, FreeRDP_RedirectDrives, TRUE);
+        addStatic(s, "rdpdr", NULL);
+        const char *dv[2] = { "Phone", st };
+        RDPDR_DEVICE *dev = freerdp_device_new(RDPDR_DTYP_FILESYSTEM, 2, dv);
+        if (dev) freerdp_device_collection_add(s, dev);
+    }
+
     if (gw[0] != 0) {
         freerdp_settings_set_string(s, FreeRDP_GatewayHostname, gw);
         freerdp_settings_set_bool(s, FreeRDP_GatewayEnabled, TRUE);
@@ -345,6 +378,7 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     (*e)->ReleaseStringUTFChars(e, ju, user);
     (*e)->ReleaseStringUTFChars(e, jp, pass);
     (*e)->ReleaseStringUTFChars(e, jg, gw);
+    (*e)->ReleaseStringUTFChars(e, jst, st);
 
     running = 1;
     dirty = 0;
@@ -353,6 +387,17 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     if (!freerdp_connect(inst)) {
         if (running) reportError();
         goto done;
+    }
+    {
+        UINT32 grW = freerdp_settings_get_uint32(s, FreeRDP_DesktopWidth);
+        UINT32 grH = freerdp_settings_get_uint32(s, FreeRDP_DesktopHeight);
+        if (grW > 0 && grH > 0) {
+            W = (int)grW;
+            H = (int)grH;
+            mx = W / 2;
+            my = H / 2;
+        }
+        (*e)->CallVoidMethod(e, self, mRes, (jint)W, (jint)H);
     }
     (*e)->CallVoidMethod(e, self, mOk);
 
