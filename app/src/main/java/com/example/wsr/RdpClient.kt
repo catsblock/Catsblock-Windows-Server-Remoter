@@ -42,7 +42,7 @@ class FreeRdpClient : RdpClient {
 
     private external fun nativeRun(
         host: String, port: Int, user: String, pass: String, gateway: String,
-        admin: Boolean, w: Int, h: Int, bmp: Bitmap
+        admin: Boolean, audio: Int, w: Int, h: Int, bmp: Bitmap
     )
     private external fun nativeStop()
     private external fun nativeMove(dx: Int, dy: Int)
@@ -124,11 +124,12 @@ class FreeRdpClient : RdpClient {
         bmp.setHasAlpha(false)
         bitmap = bmp
         val gw = s.gateway.trim()
+        val audio = s.audio.coerceIn(0, 2)
 
         Thread {
             try {
                 System.loadLibrary("wsr")
-                nativeRun(host, port, s.user, s.password, gw, s.admin, 1280, 720, bmp)
+                nativeRun(host, port, s.user, s.password, gw, s.admin, audio, 1280, 720, bmp)
             } catch (e: Throwable) {
                 ticking = false
                 if (live) main.post { l.onError("${e.javaClass.simpleName}: ${e.message} (stage: $stage)") }
