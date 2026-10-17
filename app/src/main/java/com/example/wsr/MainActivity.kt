@@ -161,7 +161,7 @@ fun Welcome(onContinue: () -> Unit) {
                 colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerHigh)
             ) {
                 Text(
-                    "Welcome to Windows Server Remoter! You can use a server's IP address, name, and password to access Windows from your home or mobile device! But remember, all responsibilities for the windows and server that you created are entirely your responsibility. The creator is not allowed to see any of their servers or view the current screen of their server.",
+                    "Welcome to Windows Server Remoter! You can use a server's IP address, name, and password to access Windows from your home or mobile device! But remember, all responsibilities for the windows and server that you created are entirely your responsibility. The creator is not allowed to see ur servers or view the current screen of ur server.",
                     Modifier.padding(20.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     color = cs.onSurfaceVariant
