@@ -95,6 +95,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -114,6 +115,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Job
@@ -123,6 +125,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private sealed interface State {
     object Connecting : State
@@ -168,7 +171,21 @@ fun SessionScreen(
     var restartMsg by remember(server.id) { mutableStateOf<String?>(null) }
     var cx by remember(server.id) { mutableIntStateOf(server.resW / 2) }
     var cy by remember(server.id) { mutableIntStateOf(server.resH / 2) }
+    var srvCur by remember(server.id) { mutableStateOf<CurFrame?>(null) }
+    var step by remember { mutableIntStateOf(0) }
+    val custom = Extra.custom
     val connected = state is State.Connected
+
+    LaunchedEffect(custom) {
+        step = 0
+        val a = custom
+        if (a != null && a.steps.size > 1) {
+            while (true) {
+                delay(a.steps[step % a.steps.size].ms.toLong())
+                step++
+            }
+        }
+    }
 
     LaunchedEffect(cur) { onUpdate(cur) }
 
@@ -260,6 +277,9 @@ fun SessionScreen(
                 }
                 override fun onOs(name: String) {
                     cur = cur.copy(os = name)
+                }
+                override fun onCursor(bmp: Bitmap?, hx: Int, hy: Int) {
+                    srvCur = if (bmp == null) null else CurFrame(bmp, hx, hy, 0).also { Extra.addSeen(it) }
                 }
             }
         )
@@ -391,24 +411,42 @@ fun SessionScreen(
                             val oy = (size.height - gh * sc) / 2f
                             val px = ox + cx * sc
                             val py = oy + cy * sc
-                            val k = density * 1.2f * Prefs.cursorSize
-                            val p = Path().apply {
-                                moveTo(px, py)
-                                lineTo(px, py + 18f * k)
-                                lineTo(px + 5f * k, py + 14f * k)
-                                lineTo(px + 9f * k, py + 22f * k)
-                                lineTo(px + 12f * k, py + 21f * k)
-                                lineTo(px + 8f * k, py + 13f * k)
-                                lineTo(px + 14f * k, py + 13f * k)
-                                close()
+                            val a = custom
+                            val f = if (a != null && a.steps.isNotEmpty()) a.steps[step % a.steps.size] else srvCur
+                            if (f != null) {
+                                val s = (if (a != null) density else sc) * Prefs.cursorSize
+                                drawImage(
+                                    f.bmp.asImageBitmap(),
+                                    dstOffset = IntOffset((px - f.hx * s).roundToInt(), (py - f.hy * s).roundToInt()),
+                                    dstSize = IntSize(
+                                        (f.bmp.width * s).roundToInt().coerceAtLeast(1),
+                                        (f.bmp.height * s).roundToInt().coerceAtLeast(1)
+                                    ),
+                                    filterQuality = FilterQuality.Low
+                                )
+                            } else {
+                                val k = density * 1.2f * Prefs.cursorSize
+                                val p = Path().apply {
+                                    moveTo(px, py)
+                                    lineTo(px, py + 18f * k)
+                                    lineTo(px + 5f * k, py + 14f * k)
+                                    lineTo(px + 9f * k, py + 22f * k)
+                                    lineTo(px + 12f * k, py + 21f * k)
+                                    lineTo(px + 8f * k, py + 13f * k)
+                                    lineTo(px + 14f * k, py + 13f * k)
+                                    close()
+                                }
+                                drawPath(p, Color.White)
+                                drawPath(p, Color.Black, style = Stroke(width = 1.5f * density * Prefs.cursorSize))
                             }
-                            drawPath(p, Color.White)
-                            drawPath(p, Color.Black, style = Stroke(width = 1.5f * density * Prefs.cursorSize))
                         }
                     }
                 }
 
                 Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    if (Extra.fpsShower || Extra.pingShower) {
+                        StatsOverlay(client, cur.host, Modifier.align(Alignment.TopStart).padding(4.dp))
+                    }
                     if (Prefs.joystick) {
                         Joystick(client, Modifier.align(Alignment.BottomStart).padding(16.dp))
                     }
