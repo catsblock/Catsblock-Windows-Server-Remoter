@@ -9,6 +9,8 @@
 #include <freerdp/freerdp.h>
 #include <freerdp/addin.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/graphics.h>
+#include <freerdp/codec/color.h>
 #include <freerdp/input.h>
 #include <freerdp/settings.h>
 #include <freerdp/error.h>
@@ -29,11 +31,12 @@ typedef struct {
 
 static JNIEnv *E;
 static jobject self, bmp;
-static jmethodID mLog, mErr, mOk, mFrame, mCert, mClip, mRes;
+static jmethodID mLog, mErr, mOk, mFrame, mCert, mClip, mRes, mCur;
 static freerdp *inst;
 static rdpInput *inp;
 static CliprdrClientContext *clip;
 static volatile int running, dirty;
+static volatile int frames;
 static int mx, my, W, H, gClip = 1, provReg = 0;
 static long last;
 static BOOL (*orig)(rdpContext *);
@@ -94,6 +97,7 @@ static void push(void) {
 static BOOL endpaint(rdpContext *c) {
     if (orig) orig(c);
     dirty = 1;
+    frames++;
     if (now() - last >= 50) push();
     return TRUE;
 }
@@ -212,11 +216,81 @@ static BOOL pre(freerdp *i) {
     return TRUE;
 }
 
+typedef struct {
+    rdpPointer pt;
+    jint *argb;
+    int w, h, hx, hy;
+} WsrPtr;
+
+static BOOL ptrNew(rdpContext *c, rdpPointer *p) {
+    WsrPtr *wp = (WsrPtr *)p;
+    wp->argb = NULL;
+    if (p->width == 0 || p->height == 0 || p->xorBpp == 4 || p->xorBpp == 8) return TRUE;
+    wp->w = (int)p->width;
+    wp->h = (int)p->height;
+    wp->hx = (int)p->xPos;
+    wp->hy = (int)p->yPos;
+    wp->argb = (jint *)calloc((size_t)wp->w * (size_t)wp->h, 4);
+    if (!wp->argb) return FALSE;
+    if (!freerdp_image_copy_from_pointer_data((BYTE *)wp->argb, PIXEL_FORMAT_BGRA32,
+                                              (UINT32)wp->w * 4, 0, 0, p->width, p->height,
+                                              p->xorMaskData, p->lengthXorMask,
+                                              p->andMaskData, p->lengthAndMask, p->xorBpp, NULL)) {
+        free(wp->argb);
+        wp->argb = NULL;
+    }
+    return TRUE;
+}
+
+static void ptrFree(rdpContext *c, rdpPointer *p) {
+    WsrPtr *wp = (WsrPtr *)p;
+    free(wp->argb);
+    wp->argb = NULL;
+}
+
+static void sendCursor(int w, int h, int hx, int hy, const jint *px) {
+    jintArray arr = NULL;
+    if (px) {
+        arr = (*E)->NewIntArray(E, w * h);
+        if (arr) (*E)->SetIntArrayRegion(E, arr, 0, w * h, px);
+    }
+    (*E)->CallVoidMethod(E, self, mCur, (jint)w, (jint)h, (jint)hx, (jint)hy, arr);
+    if (arr) (*E)->DeleteLocalRef(E, arr);
+}
+
+static BOOL ptrSet(rdpContext *c, rdpPointer *p) {
+    WsrPtr *wp = (WsrPtr *)p;
+    if (wp->argb) sendCursor(wp->w, wp->h, wp->hx, wp->hy, wp->argb);
+    else sendCursor(0, 0, 0, 0, NULL);
+    return TRUE;
+}
+
+static BOOL ptrNull(rdpContext *c) {
+    sendCursor(0, 0, 0, 0, NULL);
+    return TRUE;
+}
+
+static BOOL ptrPos(rdpContext *c, UINT32 x, UINT32 y) {
+    return TRUE;
+}
+
 static BOOL post(freerdp *i) {
     callStr(mLog, "Authenticated. Initializing display");
     if (!gdi_init(i, PIXEL_FORMAT_RGBA32)) return FALSE;
     orig = i->context->update->EndPaint;
     i->context->update->EndPaint = endpaint;
+    {
+        rdpPointer pointer;
+        memset(&pointer, 0, sizeof pointer);
+        pointer.size = sizeof(WsrPtr);
+        pointer.New = (pPointer_New)ptrNew;
+        pointer.Free = (pPointer_Free)ptrFree;
+        pointer.Set = (pPointer_Set)ptrSet;
+        pointer.SetNull = (pPointer_SetNull)ptrNull;
+        pointer.SetDefault = (pPointer_SetDefault)ptrNull;
+        pointer.SetPosition = (pPointer_SetPosition)ptrPos;
+        graphics_register_pointer(i->context->graphics, &pointer);
+    }
     return TRUE;
 }
 
@@ -258,6 +332,7 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     clip = NULL;
     gClip = clipOn ? 1 : 0;
     lastLog[0] = 0;
+    frames = 0;
     setenv("HOME", "/data/data/com.example.wsr/files", 1);
     setenv("XDG_CONFIG_HOME", "/data/data/com.example.wsr/files/.config", 1);
     setenv("TMPDIR", "/data/data/com.example.wsr/cache", 1);
@@ -272,6 +347,7 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeRun(
     mCert = (*e)->GetMethodID(e, c, "jCert", "(Ljava/lang/String;)Z");
     mClip = (*e)->GetMethodID(e, c, "jClip", "(Ljava/lang/String;)V");
     mRes = (*e)->GetMethodID(e, c, "jRes", "(II)V");
+    mCur = (*e)->GetMethodID(e, c, "jCursor", "(IIII[I)V");
 
     if (!provReg) {
         freerdp_register_addin_provider(freerdp_channels_load_static_addin_entry, 0);
@@ -476,4 +552,10 @@ JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeKey(JNIEnv *e, j
 JNIEXPORT void JNICALL Java_com_example_wsr_FreeRdpClient_nativeUnicode(JNIEnv *e, jobject t, jint code, jboolean down) {
     if (!inp) return;
     freerdp_input_send_unicode_keyboard_event(inp, down ? KBD_FLAGS_DOWN : KBD_FLAGS_RELEASE, (UINT16)code);
+}
+
+JNIEXPORT jint JNICALL Java_com_example_wsr_FreeRdpClient_nativeFrames(JNIEnv *e, jobject t) {
+    int f = frames;
+    frames = 0;
+    return f;
 }
