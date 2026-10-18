@@ -16,6 +16,7 @@ interface RdpListener {
     fun onFrame(bmp: Bitmap)
     fun onClipboard(text: String) {}
     fun onResolution(w: Int, h: Int) {}
+    fun onOs(name: String) {}
 }
 
 interface RdpClient {
@@ -36,6 +37,8 @@ class FreeRdpClient : RdpClient {
     private var listener: RdpListener? = null
     private var bitmap: Bitmap? = null
     private var worker: Thread? = null
+    private var probeHost = ""
+    private var probePort = 3389
     @Volatile private var gen = 0
     @Volatile private var live = false
     @Volatile private var ticking = false
@@ -78,6 +81,13 @@ class FreeRdpClient : RdpClient {
         ticking = false
         connected = true
         main.post { if (live) listener?.onConnected("Windows") }
+        val g = gen
+        val hst = probeHost
+        val prt = probePort
+        Thread {
+            val name = OsProbe.detect(hst, prt)
+            if (name != null) main.post { if (live && g == gen) listener?.onOs(name) }
+        }.start()
     }
 
     fun jFrame() {
@@ -133,6 +143,8 @@ class FreeRdpClient : RdpClient {
             port = host.substring(idx + 1).toInt()
             host = host.substring(0, idx)
         }
+        probeHost = host
+        probePort = port
         val rw = s.resW.coerceIn(640, 3840)
         val rh = s.resH.coerceIn(360, 2160)
         val bmp = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888)
