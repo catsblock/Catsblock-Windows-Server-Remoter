@@ -17,6 +17,7 @@ interface RdpListener {
     fun onClipboard(text: String) {}
     fun onResolution(w: Int, h: Int) {}
     fun onOs(name: String) {}
+    fun onCursor(bmp: Bitmap?, hx: Int, hy: Int) {}
 }
 
 interface RdpClient {
@@ -28,6 +29,7 @@ interface RdpClient {
     fun key(androidKeyCode: Int, down: Boolean)
     fun pasteText(text: String)
     fun setClipboard(text: String)
+    fun fps(): Int = 0
 }
 
 class FreeRdpClient : RdpClient {
@@ -60,6 +62,7 @@ class FreeRdpClient : RdpClient {
     private external fun nativeKey(sc: Int, down: Boolean)
     private external fun nativeUnicode(code: Int, down: Boolean)
     private external fun nativeSetClip(text: String)
+    private external fun nativeFrames(): Int
 
     fun jLog(s: String) {
         stage = s
@@ -103,6 +106,13 @@ class FreeRdpClient : RdpClient {
         main.post { if (live) listener?.onClipboard(text) }
     }
 
+    fun jCursor(w: Int, h: Int, hx: Int, hy: Int, pix: IntArray?) {
+        val bmp = if (pix != null && w > 0 && h > 0) {
+            Bitmap.createBitmap(pix, w, h, Bitmap.Config.ARGB_8888)
+        } else null
+        main.post { if (live) listener?.onCursor(bmp, hx, hy) }
+    }
+
     fun jCert(fp: String): Boolean {
         val latch = CountDownLatch(1)
         val ok = AtomicBoolean(false)
@@ -114,6 +124,9 @@ class FreeRdpClient : RdpClient {
         latch.await(timeoutSec.toLong(), TimeUnit.SECONDS)
         return ok.get()
     }
+
+    override fun fps(): Int =
+        if (live) try { nativeFrames() } catch (_: Throwable) { 0 } else 0
 
     override fun connect(s: Server, l: RdpListener) {
         listener = l
