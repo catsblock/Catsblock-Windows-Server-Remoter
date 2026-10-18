@@ -424,6 +424,7 @@ fun SettingsPage(inDialog: Boolean = false) {
                 String.format("%.1fx", Prefs.sensitivity)
             ) { Prefs.sensitivity = it }
         }
+        ExtraSettings()
         Spacer(Modifier.height(16.dp))
     }
 }
