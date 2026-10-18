@@ -29,8 +29,10 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Gamepad
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Mouse
 import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.rounded.Opacity
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SpaceBar
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.UnfoldMore
@@ -368,8 +371,7 @@ private fun SliderRow(
 @Composable
 fun SettingsPage(inDialog: Boolean = false) {
     Column(
-        (if (inDialog) Modifier else Modifier.fillMaxSize())
-            .verticalScroll(rememberScrollState())
+        (if (inDialog) Modifier else Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
             .padding(horizontal = if (inDialog) 0.dp else 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -388,6 +390,9 @@ fun SettingsPage(inDialog: Boolean = false) {
             SettingSwitch(Icons.Rounded.Gamepad, "Show joystick (WASD)", Prefs.joystick) {
                 Prefs.joystick = it; Prefs.save()
             }
+            SettingSwitch(Icons.Rounded.Explore, "Right joystick", Prefs.rightJoystick) {
+                Prefs.rightJoystick = it; Prefs.save()
+            }
             SettingSwitch(Icons.Rounded.SpaceBar, "Show space button", Prefs.space) {
                 Prefs.space = it; Prefs.save()
             }
@@ -396,6 +401,12 @@ fun SettingsPage(inDialog: Boolean = false) {
             }
             SettingSwitch(Icons.Rounded.Mouse, "Show Mouse buttons instead of By touch", Prefs.mouseButtons) {
                 Prefs.mouseButtons = it; Prefs.save()
+            }
+            SettingSwitch(Icons.Rounded.SportsEsports, "Controller Support", Prefs.controller) {
+                Prefs.controller = it; Prefs.save()
+            }
+            SettingSwitch(Icons.Rounded.Keyboard, "Show the main keys", Prefs.mainKeys) {
+                Prefs.mainKeys = it; Prefs.save()
             }
         }
         SectionTitle("Sizes and pointer")
