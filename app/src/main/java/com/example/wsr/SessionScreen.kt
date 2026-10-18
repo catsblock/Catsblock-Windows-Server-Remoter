@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -119,6 +121,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
+import kotlin.math.max
 
 private sealed interface State {
     object Connecting : State
@@ -132,8 +136,7 @@ private enum class G { UP, MOVE, HOLD }
 fun SessionScreen(
     server: Server,
     all: List<Server>,
-    onOs: (String) -> Unit,
-    onRes: (Int, Int, Int, Int) -> Unit,
+    onUpdate: (Server) -> Unit,
     onExit: () -> Unit,
     onSwitch: (Server) -> Unit
 ) {
@@ -149,6 +152,7 @@ fun SessionScreen(
         (ctx.getExternalFilesDir(null) ?: ctx.filesDir).resolve("Shared").also { it.mkdirs() }.absolutePath
     }
     val client = remember(server.id) { FreeRdpClient().also { it.storageDir = storageDir } }
+    var cur by remember(server.id) { mutableStateOf(server) }
     var state by remember(server.id) { mutableStateOf<State>(State.Connecting) }
     var log by remember(server.id) { mutableStateOf("Starting connection...") }
     var frame by remember(server.id) { mutableStateOf<Bitmap?>(null) }
@@ -159,15 +163,14 @@ fun SessionScreen(
     var showServers by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
-
-    var resW by remember(server.id) { mutableIntStateOf(server.resW) }
-    var resH by remember(server.id) { mutableIntStateOf(server.resH) }
-    var maxW by remember(server.id) { mutableIntStateOf(server.maxW) }
     var gw by remember(server.id) { mutableIntStateOf(server.resW) }
     var gh by remember(server.id) { mutableIntStateOf(server.resH) }
-    var restarting by remember(server.id) { mutableStateOf(false) }
+    var restartMsg by remember(server.id) { mutableStateOf<String?>(null) }
     var cx by remember(server.id) { mutableIntStateOf(server.resW / 2) }
     var cy by remember(server.id) { mutableIntStateOf(server.resH / 2) }
+    val connected = state is State.Connected
+
+    LaunchedEffect(cur) { onUpdate(cur) }
 
     val hasMic = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
         PackageManager.PERMISSION_GRANTED
@@ -184,18 +187,23 @@ fun SessionScreen(
     val onMove: (Float, Float) -> Unit = { dx, dy ->
         val ix = dx.toInt()
         val iy = dy.toInt()
-        cx = (cx + ix).coerceIn(0, gw - 1)
-        cy = (cy + iy).coerceIn(0, gh - 1)
-        client.mouseMove(ix.toFloat(), iy.toFloat())
+        if (ix != 0 || iy != 0) {
+            cx = (cx + ix).coerceIn(0, gw - 1)
+            cy = (cy + iy).coerceIn(0, gh - 1)
+            client.mouseMove(ix.toFloat(), iy.toFloat())
+        }
     }
 
-    val applyRes: (Int) -> Unit = { w ->
-        if (w != resW) {
+    val applyChange: (Server) -> Unit = { n ->
+        val conn = n.resW != cur.resW || n.audio != cur.audio || n.mic != cur.mic ||
+            n.storage != cur.storage || n.clipboard != cur.clipboard
+        if (conn) {
+            restartMsg = if (n.resW != cur.resW) "Changing the server screen resolution, please wait ..."
+            else "Applying the new settings, please wait ..."
             showSettings = false
-            restarting = true
-            resW = w
-            resH = Res.h(w)
         }
+        if (n.mic && !cur.mic && !micGranted) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        cur = n
     }
 
     BackHandler {
@@ -212,26 +220,27 @@ fun SessionScreen(
         onDispose { cm.removePrimaryClipChangedListener(l) }
     }
 
-    DisposableEffect(server.id, retry, ready, resW, resH) {
+    DisposableEffect(
+        server.id, retry, ready, cur.resW, cur.resH, cur.audio, cur.mic, cur.storage, cur.clipboard, micGranted
+    ) {
         if (!ready) return@DisposableEffect onDispose { }
         state = State.Connecting
         log = "Starting connection..."
-        cx = resW / 2
-        cy = resH / 2
+        cx = cur.resW / 2
+        cy = cur.resH / 2
         client.connect(
-            server.copy(resW = resW, resH = resH, mic = server.mic && micGranted),
+            cur.copy(mic = cur.mic && micGranted),
             object : RdpListener {
                 override fun onLog(msg: String) { log = msg }
                 override fun onCertificate(fingerprint: String, accept: (Boolean) -> Unit) {
                     cert = fingerprint to accept
                 }
                 override fun onError(code: String) {
-                    restarting = false
+                    restartMsg = null
                     state = State.Error(code)
                 }
                 override fun onConnected(osName: String) {
-                    onOs(osName)
-                    restarting = false
+                    restartMsg = null
                     state = State.Connected
                 }
                 override fun onFrame(bmp: Bitmap) { frame = bmp }
@@ -244,24 +253,118 @@ fun SessionScreen(
                     gh = h
                     cx = w / 2
                     cy = h / 2
-                    val limited = w < resW || h < resH
-                    val newMax = if (limited) Res.snapMax(w).coerceAtLeast(Res.MIN_W) else maxW
-                    maxW = newMax
-                    val keepW = minOf(resW, newMax)
-                    onRes(keepW, Res.h(keepW), newMax, Res.h(newMax))
+                    if (w < cur.resW || h < cur.resH) {
+                        val nm = Res.snapMax(w).coerceAtLeast(Res.MIN_W)
+                        cur = cur.copy(maxW = nm, maxH = Res.h(nm))
+                    }
+                }
+                override fun onOs(name: String) {
+                    cur = cur.copy(os = name)
                 }
             }
         )
         onDispose { client.disconnect() }
     }
 
+    val padKeys = remember { mutableSetOf<Int>() }
+    val stick = remember { floatArrayOf(0f, 0f) }
+    val trig = remember { booleanArrayOf(false, false) }
+
+    DisposableEffect(Prefs.controller, connected, client) {
+        if (!Prefs.controller || !connected) return@DisposableEffect onDispose { }
+        fun padKey(code: Int, on: Boolean) {
+            if (on && padKeys.add(code)) client.key(code, true)
+            if (!on && padKeys.remove(code)) client.key(code, false)
+        }
+        val left = if (cur.swapMouse) 1 else 0
+        val right = if (cur.swapMouse) 0 else 1
+        Gamepad.motion = motion@{ ev ->
+            val joy = (ev.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+            if (!joy || ev.action != MotionEvent.ACTION_MOVE) return@motion false
+            val lx = ev.getAxisValue(MotionEvent.AXIS_X)
+            val ly = ev.getAxisValue(MotionEvent.AXIS_Y)
+            padKey(KeyEvent.KEYCODE_W, ly < -0.5f)
+            padKey(KeyEvent.KEYCODE_S, ly > 0.5f)
+            padKey(KeyEvent.KEYCODE_A, lx < -0.5f)
+            padKey(KeyEvent.KEYCODE_D, lx > 0.5f)
+            var rx = ev.getAxisValue(MotionEvent.AXIS_Z)
+            var ry = ev.getAxisValue(MotionEvent.AXIS_RZ)
+            if (abs(rx) < 0.01f && abs(ry) < 0.01f) {
+                rx = ev.getAxisValue(MotionEvent.AXIS_RX)
+                ry = ev.getAxisValue(MotionEvent.AXIS_RY)
+            }
+            stick[0] = if (abs(rx) > 0.2f) rx else 0f
+            stick[1] = if (abs(ry) > 0.2f) ry else 0f
+            val lt = max(ev.getAxisValue(MotionEvent.AXIS_LTRIGGER), ev.getAxisValue(MotionEvent.AXIS_BRAKE)) > 0.5f
+            val rt = max(ev.getAxisValue(MotionEvent.AXIS_RTRIGGER), ev.getAxisValue(MotionEvent.AXIS_GAS)) > 0.5f
+            if (rt != trig[1]) {
+                trig[1] = rt
+                client.mouseButton(left, rt)
+            }
+            if (lt != trig[0]) {
+                trig[0] = lt
+                client.mouseButton(right, lt)
+            }
+            val hx = ev.getAxisValue(MotionEvent.AXIS_HAT_X)
+            val hy = ev.getAxisValue(MotionEvent.AXIS_HAT_Y)
+            padKey(KeyEvent.KEYCODE_DPAD_LEFT, hx < -0.5f)
+            padKey(KeyEvent.KEYCODE_DPAD_RIGHT, hx > 0.5f)
+            padKey(KeyEvent.KEYCODE_DPAD_UP, hy < -0.5f)
+            padKey(KeyEvent.KEYCODE_DPAD_DOWN, hy > 0.5f)
+            true
+        }
+        Gamepad.key = keyH@{ ev ->
+            val pad = (ev.source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+                (ev.source and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD
+            if (!pad) return@keyH false
+            val code = when (ev.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_SPACE
+                KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_CTRL_LEFT
+                KeyEvent.KEYCODE_BUTTON_X -> KeyEvent.KEYCODE_E
+                KeyEvent.KEYCODE_BUTTON_Y -> KeyEvent.KEYCODE_R
+                KeyEvent.KEYCODE_BUTTON_L1 -> KeyEvent.KEYCODE_Q
+                KeyEvent.KEYCODE_BUTTON_R1 -> KeyEvent.KEYCODE_F
+                KeyEvent.KEYCODE_BUTTON_THUMBL -> KeyEvent.KEYCODE_SHIFT_LEFT
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> KeyEvent.KEYCODE_G
+                KeyEvent.KEYCODE_BUTTON_START -> KeyEvent.KEYCODE_ESCAPE
+                KeyEvent.KEYCODE_BUTTON_SELECT -> KeyEvent.KEYCODE_TAB
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> ev.keyCode
+                else -> return@keyH false
+            }
+            if (ev.action == KeyEvent.ACTION_DOWN) {
+                if (ev.repeatCount == 0) padKey(code, true)
+            } else if (ev.action == KeyEvent.ACTION_UP) {
+                padKey(code, false)
+            }
+            true
+        }
+        onDispose {
+            Gamepad.motion = null
+            Gamepad.key = null
+            padKeys.toList().forEach { client.key(it, false) }
+            padKeys.clear()
+            stick[0] = 0f
+            stick[1] = 0f
+        }
+    }
+
+    LaunchedEffect(Prefs.controller, connected) {
+        if (Prefs.controller && connected) {
+            while (true) {
+                if (stick[0] != 0f || stick[1] != 0f) onMove(stick[0] * 14f, stick[1] * 14f)
+                delay(16)
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (val st = state) {
             State.Connecting -> ConnectingScreen(
-                title = if (restarting) "Restarting ..." else "Connecting to the server ...",
-                status = if (restarting) "Changing the server screen resolution, please wait ..." else log,
-                button = if (restarting) "Cancel" else "Back to main menu",
-                cancel = restarting
+                title = if (restartMsg != null) "Restarting ..." else "Connecting to the server ...",
+                status = restartMsg ?: log,
+                button = if (restartMsg != null) "Cancel" else "Back to main menu",
+                cancel = restartMsg != null
             ) {
                 client.disconnect()
                 onExit()
@@ -270,8 +373,8 @@ fun SessionScreen(
             State.Connected -> {
                 Box(
                     Modifier.fillMaxSize()
-                        .pointerInput(server.id, server.swapMouse, Prefs.mouseButtons) {
-                            touchpad(client, server.swapMouse, Prefs.mouseButtons, onMove)
+                        .pointerInput(server.id, cur.swapMouse, Prefs.mouseButtons) {
+                            touchpad(client, cur.swapMouse, Prefs.mouseButtons, onMove)
                         }
                 ) {
                     Box(Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom)) {
@@ -309,6 +412,26 @@ fun SessionScreen(
                     if (Prefs.joystick) {
                         Joystick(client, Modifier.align(Alignment.BottomStart).padding(16.dp))
                     }
+                    if (Prefs.rightJoystick) {
+                        RightJoystick(
+                            onMove,
+                            Modifier.align(Alignment.BottomEnd)
+                                .padding(end = if (Prefs.mouseButtons) 200.dp else 140.dp, bottom = 16.dp)
+                        )
+                    }
+                    if (Prefs.mainKeys) {
+                        Row(
+                            Modifier.align(Alignment.BottomCenter)
+                                .padding(bottom = if (showKeys) 84.dp else 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            KeyHold("Q", KeyEvent.KEYCODE_Q, client)
+                            KeyHold("E", KeyEvent.KEYCODE_E, client)
+                            KeyHold("R", KeyEvent.KEYCODE_R, client)
+                            KeyHold("F", KeyEvent.KEYCODE_F, client)
+                            KeyHold("G", KeyEvent.KEYCODE_G, client)
+                        }
+                    }
                     if (Prefs.scrollButtons) {
                         Column(
                             Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
@@ -319,8 +442,8 @@ fun SessionScreen(
                         }
                     }
                     if (Prefs.mouseButtons) {
-                        val l = if (server.swapMouse) 1 else 0
-                        val r = if (server.swapMouse) 0 else 1
+                        val l = if (cur.swapMouse) 1 else 0
+                        val r = if (cur.swapMouse) 0 else 1
                         Row(
                             Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 72.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -435,9 +558,8 @@ fun SessionScreen(
             icon = { Icon(Icons.Rounded.Settings, null) },
             title = { Text("Settings") },
             text = {
-                Column {
-                    SectionTitle("Screen")
-                    SettingsGroup { ResolutionRow(resW, maxW) { applyRes(it) } }
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    SessionOptions(cur, applyChange)
                     SettingsPage(inDialog = true)
                 }
             },
@@ -591,6 +713,26 @@ private fun MouseKey(label: String, button: Int, client: RdpClient, container: C
 }
 
 @Composable
+private fun KeyHold(label: String, code: Int, client: RdpClient) {
+    val cs = MaterialTheme.colorScheme
+    Box(
+        Modifier.size(46.dp).clip(CircleShape)
+            .background(cs.tertiaryContainer.copy(alpha = 0.85f))
+            .pointerInput(code) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    client.key(code, true)
+                    waitForUpOrCancellation()
+                    client.key(code, false)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = cs.onTertiaryContainer, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
 private fun ScrollKey(icon: ImageVector, dir: Int, client: RdpClient) {
     val cs = MaterialTheme.colorScheme
     Box(
@@ -731,6 +873,43 @@ private fun Joystick(client: RdpClient, modifier: Modifier) {
         Box(
             Modifier.offset { IntOffset(knob.x.toInt(), knob.y.toInt()) }
                 .size(size / 3).clip(CircleShape).background(cs.primary.copy(alpha = 0.9f))
+        )
+    }
+}
+
+@Composable
+private fun RightJoystick(onMove: (Float, Float) -> Unit, modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
+    val size = Prefs.joySize.dp
+    var knob by remember { mutableStateOf(Offset.Zero) }
+    var active by remember { mutableStateOf(false) }
+
+    LaunchedEffect(active) {
+        while (active) {
+            onMove(knob.x * 0.12f * Prefs.sensitivity, knob.y * 0.12f * Prefs.sensitivity)
+            delay(16)
+        }
+    }
+
+    Box(
+        modifier.size(size).clip(CircleShape).background(cs.surfaceContainerHigh.copy(alpha = 0.55f))
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { active = true },
+                    onDragEnd = { active = false; knob = Offset.Zero },
+                    onDragCancel = { active = false; knob = Offset.Zero }
+                ) { change, _ ->
+                    val c = Offset(this.size.width / 2f, this.size.height / 2f)
+                    val d = change.position - c
+                    val t = this.size.width / 3f
+                    knob = Offset(d.x.coerceIn(-t, t), d.y.coerceIn(-t, t))
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier.offset { IntOffset(knob.x.toInt(), knob.y.toInt()) }
+                .size(size / 3).clip(CircleShape).background(cs.tertiary.copy(alpha = 0.9f))
         )
     }
 }
