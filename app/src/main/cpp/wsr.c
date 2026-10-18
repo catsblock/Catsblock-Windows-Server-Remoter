@@ -20,6 +20,8 @@
 #include <winpr/wlog.h>
 #include <winpr/string.h>
 
+extern BOOL freerdp_client_load_addins(rdpChannels *channels, rdpSettings *settings);
+
 typedef struct {
     rdpContext c;
     char pad[16384];
