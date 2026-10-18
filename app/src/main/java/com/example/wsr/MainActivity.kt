@@ -1,6 +1,8 @@
 package com.example.wsr
 
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -58,6 +60,18 @@ class MainActivity : ComponentActivity() {
         Store.init(this)
         setContent { App() }
     }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        val h = Gamepad.motion
+        if (h != null && h(ev)) return true
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(ev: KeyEvent): Boolean {
+        val h = Gamepad.key
+        if (h != null && h(ev)) return true
+        return super.dispatchKeyEvent(ev)
+    }
 }
 
 @Composable
@@ -109,17 +123,10 @@ fun App() {
                     is Screen.Session -> SessionScreen(
                         server = s.server,
                         all = servers,
-                        onOs = { os ->
-                            val i = servers.indexOfFirst { it.id == s.server.id }
-                            if (i >= 0) {
-                                servers[i] = servers[i].copy(os = os)
-                                persist()
-                            }
-                        },
-                        onRes = { w, h, mw, mh ->
-                            val i = servers.indexOfFirst { it.id == s.server.id }
-                            if (i >= 0) {
-                                servers[i] = servers[i].copy(resW = w, resH = h, maxW = mw, maxH = mh)
+                        onUpdate = { n ->
+                            val i = servers.indexOfFirst { it.id == n.id }
+                            if (i >= 0 && servers[i] != n) {
+                                servers[i] = n
                                 persist()
                             }
                         },
