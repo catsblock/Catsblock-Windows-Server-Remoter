@@ -93,10 +93,13 @@ object Store {
 }
 
 object Prefs {
-    var joystick by mutableStateOf(Store.b("joy", true))
-    var space by mutableStateOf(Store.b("space", true))
+    var joystick by mutableStateOf(Store.b("joy2", false))
+    var rightJoystick by mutableStateOf(Store.b("joyR", false))
+    var space by mutableStateOf(Store.b("space2", false))
     var scrollButtons by mutableStateOf(Store.b("scroll", false))
     var mouseButtons by mutableStateOf(Store.b("mouseBtns", false))
+    var controller by mutableStateOf(Store.b("pad", false))
+    var mainKeys by mutableStateOf(Store.b("mainKeys", false))
     var joySize by mutableStateOf(Store.f("joySize", 90f))
     var cursorSize by mutableStateOf(Store.f("cursorSize", 1f))
     var barAlpha by mutableStateOf(Store.f("barAlpha", 0.35f))
@@ -104,10 +107,13 @@ object Prefs {
     var sensitivity by mutableStateOf(Store.f("sens", 1.5f))
 
     fun save() {
-        Store.putB("joy", joystick)
-        Store.putB("space", space)
+        Store.putB("joy2", joystick)
+        Store.putB("joyR", rightJoystick)
+        Store.putB("space2", space)
         Store.putB("scroll", scrollButtons)
         Store.putB("mouseBtns", mouseButtons)
+        Store.putB("pad", controller)
+        Store.putB("mainKeys", mainKeys)
         Store.putF("joySize", joySize)
         Store.putF("cursorSize", cursorSize)
         Store.putF("barAlpha", barAlpha)
