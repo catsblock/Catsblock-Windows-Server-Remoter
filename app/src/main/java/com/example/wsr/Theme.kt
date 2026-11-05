@@ -3,8 +3,11 @@ package com.example.wsr
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -12,7 +15,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 private val LightScheme = lightColorScheme(
     primary = Color(0xFF00629D),
@@ -70,10 +75,22 @@ private val AppShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp)
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(36.dp)
 )
 
+private val BaseType = Typography()
+
+private val AppTypography = BaseType.copy(
+    headlineMedium = BaseType.headlineMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.25).sp),
+    headlineSmall = BaseType.headlineSmall.copy(fontWeight = FontWeight.Bold),
+    titleLarge = BaseType.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+    titleMedium = BaseType.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+    titleSmall = BaseType.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+    labelLarge = BaseType.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+)
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun WsrTheme(content: @Composable () -> Unit) {
     val ctx = LocalContext.current
@@ -81,5 +98,11 @@ fun WsrTheme(content: @Composable () -> Unit) {
     val scheme = if (Prefs.dynamicColor && Build.VERSION.SDK_INT >= 31) {
         if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
     } else if (dark) DarkScheme else LightScheme
-    MaterialTheme(colorScheme = scheme, shapes = AppShapes, content = content)
+    MaterialExpressiveTheme(
+        colorScheme = scheme,
+        motionScheme = MotionScheme.expressive(),
+        shapes = AppShapes,
+        typography = AppTypography,
+        content = content
+    )
 }
