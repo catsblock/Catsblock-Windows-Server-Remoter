@@ -38,15 +38,18 @@ fun ResolutionRow(w: Int, maxW: Int, onChange: (Int) -> Unit) {
     fun snap(v: Float): Int = Res.MIN_W + Math.round((v - Res.MIN_W) / Res.STEP) * Res.STEP
 
     val shown = snap(tmp)
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.AspectRatio, null, tint = cs.primary)
             Spacer(Modifier.width(16.dp))
             Text("Screen resolution", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(12.dp))
             Text(
                 "$shown × ${Res.h(shown)}",
                 style = MaterialTheme.typography.labelLarge,
-                color = cs.onSurfaceVariant
+                color = cs.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false
             )
         }
         Slider(
@@ -57,8 +60,8 @@ fun ResolutionRow(w: Int, maxW: Int, onChange: (Int) -> Unit) {
             onValueChangeFinished = { onChange(snap(tmp)) }
         )
         Text(
-            "Min ${Res.MIN_W} × ${Res.h(Res.MIN_W)} · Max $top × ${Res.h(top)} (server limit)",
-            style = MaterialTheme.typography.labelSmall,
+            "From ${Res.MIN_W} × ${Res.h(Res.MIN_W)} up to $top × ${Res.h(top)}, the most this server allows.",
+            style = MaterialTheme.typography.bodySmall,
             color = cs.onSurfaceVariant
         )
     }
