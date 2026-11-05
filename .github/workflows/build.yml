@@ -80,7 +80,7 @@ jobs:
         run: echo "$KEYSTORE_B64" | base64 -d > release.keystore
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.13
+          gradle-version: 9.4.1
       - name: Build APK
         run: gradle assembleDebug --stacktrace -PverCode=${{ github.run_number }} -PverName=1.0.${{ github.run_number }}
       - name: Rename APK
