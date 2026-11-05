@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -9,7 +8,7 @@ val verName = (project.findProperty("verName") as String?) ?: "1.0.1"
 
 android {
     namespace = "com.example.wsr"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = "26.1.10909125"
     defaultConfig {
         applicationId = "com.example.wsr"
@@ -49,7 +48,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
