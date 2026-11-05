@@ -14,13 +14,7 @@ import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,14 +29,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -67,8 +64,11 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,6 +85,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -93,7 +94,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
@@ -111,12 +111,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -228,10 +230,15 @@ fun SessionScreen(
         onExit()
     }
 
-    DisposableEffect(client) {
+    val lastRemoteClip = remember { arrayOf<String?>(null) }
+
+    DisposableEffect(client, cur.clipboard) {
+        if (!cur.clipboard) return@DisposableEffect onDispose { }
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val l = ClipboardManager.OnPrimaryClipChangedListener {
-            cm.primaryClip?.getItemAt(0)?.text?.let { client.setClipboard(it.toString()) }
+            val clip = cm.primaryClip
+            val text = if (clip != null && clip.itemCount > 0) clip.getItemAt(0)?.text?.toString() else null
+            if (text != null && text != lastRemoteClip[0]) client.setClipboard(text)
         }
         cm.addPrimaryClipChangedListener(l)
         onDispose { cm.removePrimaryClipChangedListener(l) }
@@ -262,6 +269,8 @@ fun SessionScreen(
                 }
                 override fun onFrame(bmp: Bitmap) { frame = bmp }
                 override fun onClipboard(text: String) {
+                    if (!cur.clipboard) return
+                    lastRemoteClip[0] = text
                     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("rdp", text))
                 }
@@ -381,9 +390,9 @@ fun SessionScreen(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when (val st = state) {
             State.Connecting -> ConnectingScreen(
-                title = if (restartMsg != null) "Restarting ..." else "Connecting to the server ...",
+                title = if (restartMsg != null) "Reconnecting" else "Connecting",
                 status = restartMsg ?: log,
-                button = if (restartMsg != null) "Cancel" else "Back to main menu",
+                button = if (restartMsg != null) "Cancel" else "Back to servers",
                 cancel = restartMsg != null
             ) {
                 client.disconnect()
@@ -491,27 +500,13 @@ fun SessionScreen(
                         }
                     }
                     if (Prefs.space) {
-                        Box(
-                            Modifier.align(Alignment.BottomEnd).padding(16.dp)
-                                .size(width = 110.dp, height = 44.dp)
-                                .clip(RoundedCornerShape(22.dp))
-                                .background(cs.secondaryContainer.copy(alpha = 0.85f))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        awaitFirstDown(requireUnconsumed = false)
-                                        client.key(KeyEvent.KEYCODE_SPACE, true)
-                                        waitForUpOrCancellation()
-                                        client.key(KeyEvent.KEYCODE_SPACE, false)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "Space",
-                                color = cs.onSecondaryContainer,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                        OverlayKey(
+                            "Space",
+                            Modifier.align(Alignment.BottomEnd).padding(16.dp).size(width = 112.dp, height = 48.dp),
+                            cs.secondaryContainer, cs.onSecondaryContainer, 24.dp,
+                            onDown = { client.key(KeyEvent.KEYCODE_SPACE, true) },
+                            onUp = { client.key(KeyEvent.KEYCODE_SPACE, false) }
+                        )
                     }
 
                     Surface(
@@ -520,14 +515,14 @@ fun SessionScreen(
                         color = cs.surfaceContainerHigh.copy(alpha = Prefs.barAlpha.coerceIn(0.1f, 1f))
                     ) {
                         Row(
-                            Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            BarIcon(Icons.Rounded.GridView) { showServers = true }
-                            BarIcon(Icons.Rounded.ZoomIn) { zoom = if (zoom >= 2f) 1f else zoom + 0.5f }
-                            BarIcon(Icons.Rounded.Settings) { showSettings = true }
-                            BarIcon(Icons.Rounded.Keyboard) {
+                            BarIcon(Icons.Rounded.GridView, "Switch server") { showServers = true }
+                            BarIcon(Icons.Rounded.ZoomIn, "Zoom, now ${zoom}x") { zoom = if (zoom >= 2f) 1f else zoom + 0.5f }
+                            BarIcon(Icons.Rounded.Settings, "Session settings") { showSettings = true }
+                            BarIcon(Icons.Rounded.Keyboard, "Keyboard") {
                                 showKeys = !showKeys
                                 if (!showKeys) showPhoneKb = false
                             }
@@ -580,7 +575,16 @@ fun SessionScreen(
                         ) {
                             Icon(Icons.Rounded.Computer, null, tint = cs.primary)
                             Spacer(Modifier.width(12.dp))
-                            Text(it.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                            Column(Modifier.weight(1f)) {
+                                Text(it.title, style = MaterialTheme.typography.bodyLarge)
+                                if (it.friendly.isNotBlank()) {
+                                    Text(
+                                        it.host,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = cs.onSurfaceVariant
+                                    )
+                                }
+                            }
                             if (current) Icon(Icons.Rounded.Check, null, tint = cs.primary)
                         }
                     }
@@ -591,56 +595,45 @@ fun SessionScreen(
     }
 
     if (showSettings) {
-        AlertDialog(
+        Dialog(
             onDismissRequest = { showSettings = false },
-            icon = { Icon(Icons.Rounded.Settings, null) },
-            title = { Text("Settings") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    SessionOptions(cur, applyChange)
-                    SettingsPage(inDialog = true)
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                Modifier.widthIn(max = 640.dp).fillMaxWidth(0.92f).fillMaxHeight(0.94f),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = cs.surfaceContainerHigh
+            ) {
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Settings", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                        FilledTonalIconButton({ showSettings = false }) {
+                            Icon(Icons.Rounded.Close, "Close settings")
+                        }
+                    }
+                    Column(
+                        Modifier.weight(1f).verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            "Changing screen, audio or redirection reconnects this session.",
+                            Modifier.padding(horizontal = 16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = cs.onSurfaceVariant
+                        )
+                        SessionOptions(cur, applyChange)
+                        SettingsPage(inDialog = true)
+                    }
                 }
-            },
-            confirmButton = { TextButton({ showSettings = false }) { Text("Close") } }
-        )
+            }
+        }
     }
 }
 
-@Composable
-private fun ExpressiveLoader(modifier: Modifier = Modifier) {
-    val cs = MaterialTheme.colorScheme
-    val t = rememberInfiniteTransition(label = "loader")
-    val rot by t.animateFloat(
-        0f, 360f,
-        infiniteRepeatable(tween(4000, easing = LinearEasing)),
-        label = "rot"
-    )
-    val morph by t.animateFloat(
-        0.26f, 0.5f,
-        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "morph"
-    )
-    val pulse by t.animateFloat(
-        0.82f, 1f,
-        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    Box(modifier.size(88.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.fillMaxSize()
-                .graphicsLayer { rotationZ = rot; scaleX = pulse; scaleY = pulse }
-                .clip(RoundedCornerShape((morph * 100).toInt()))
-                .background(cs.primary)
-        )
-        Box(
-            Modifier.size(40.dp)
-                .graphicsLayer { rotationZ = -rot * 1.5f; scaleX = 1.9f - pulse; scaleY = 1.9f - pulse }
-                .clip(RoundedCornerShape(((0.76f - morph) * 100).toInt()))
-                .background(cs.primaryContainer)
-        )
-    }
-}
-
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ConnectingScreen(
     title: String,
@@ -650,11 +643,7 @@ private fun ConnectingScreen(
     onBack: () -> Unit
 ) {
     val cs = MaterialTheme.colorScheme
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(cs.primaryContainer.copy(alpha = 0.7f), cs.background))
-        )
-    ) {
+    Box(Modifier.fillMaxSize().background(cs.background)) {
         Column(
             Modifier.fillMaxSize().safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
@@ -665,13 +654,12 @@ private fun ConnectingScreen(
             Text(
                 title,
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
                 color = cs.onSurface,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(20.dp))
-            ExpressiveLoader()
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
+            LoadingIndicator(Modifier.size(96.dp))
+            Spacer(Modifier.height(16.dp))
             Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
                 Text(
                     status,
@@ -694,11 +682,7 @@ private fun ConnectingScreen(
 @Composable
 private fun ErrorScreen(code: String, onHome: () -> Unit, onRetry: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(cs.errorContainer.copy(alpha = 0.7f), cs.background))
-        )
-    ) {
+    Box(Modifier.fillMaxSize().background(cs.background)) {
         Column(
             Modifier.fillMaxSize().safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
@@ -709,65 +693,96 @@ private fun ErrorScreen(code: String, onHome: () -> Unit, onRetry: () -> Unit) {
             Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(48.dp), tint = cs.error)
             Spacer(Modifier.height(12.dp))
             Text(
-                "The connection was interrupted. Error: $code",
-                style = MaterialTheme.typography.bodyLarge,
+                "Connection interrupted",
+                style = MaterialTheme.typography.headlineSmall,
                 color = cs.onSurface,
                 textAlign = TextAlign.Center
             )
+            Spacer(Modifier.height(8.dp))
+            Surface(shape = MaterialTheme.shapes.large, color = cs.errorContainer) {
+                Text(
+                    code,
+                    Modifier.widthIn(max = 480.dp).padding(horizontal = 20.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = cs.onErrorContainer,
+                    textAlign = TextAlign.Center
+                )
+            }
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onHome, Modifier.height(48.dp)) { Text("Home page") }
-                Button(onRetry, Modifier.height(48.dp)) { Text("Try Again") }
+                OutlinedButton(onHome, Modifier.heightIn(min = 48.dp)) { Text("Servers", maxLines = 1) }
+                Button(onRetry, Modifier.heightIn(min = 48.dp)) { Text("Try again", maxLines = 1) }
             }
         }
     }
 }
 
 @Composable
-private fun BarIcon(icon: ImageVector, onClick: () -> Unit) {
-    IconButton(onClick, Modifier.size(34.dp)) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(19.dp))
+private fun BarIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+    IconButton(onClick, Modifier.size(40.dp)) {
+        Icon(icon, description, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun OverlayKey(
+    label: String,
+    modifier: Modifier,
+    container: Color,
+    content: Color,
+    restRadius: Dp,
+    onDown: () -> Unit,
+    onUp: () -> Unit
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val down by rememberUpdatedState(onDown)
+    val up by rememberUpdatedState(onUp)
+    val radius by animateDpAsState(
+        if (pressed) 12.dp else restRadius,
+        MaterialTheme.motionScheme.fastSpatialSpec(),
+        label = "keyShape"
+    )
+
+    DisposableEffect(Unit) {
+        onDispose { if (pressed) up() }
+    }
+
+    Box(
+        modifier.clip(RoundedCornerShape(radius.coerceAtLeast(0.dp)))
+            .background(container.copy(alpha = if (pressed) 1f else 0.85f))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    pressed = true
+                    down()
+                    waitForUpOrCancellation()
+                    pressed = false
+                    up()
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = content, style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
 }
 
 @Composable
 private fun MouseKey(label: String, button: Int, client: RdpClient, container: Color, content: Color) {
-    Box(
-        Modifier.size(width = 76.dp, height = 48.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(container.copy(alpha = 0.85f))
-            .pointerInput(button) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    client.mouseButton(button, true)
-                    waitForUpOrCancellation()
-                    client.mouseButton(button, false)
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = content, fontWeight = FontWeight.Medium)
-    }
+    OverlayKey(
+        label, Modifier.size(width = 84.dp, height = 52.dp), container, content, 18.dp,
+        onDown = { client.mouseButton(button, true) },
+        onUp = { client.mouseButton(button, false) }
+    )
 }
 
 @Composable
 private fun KeyHold(label: String, code: Int, client: RdpClient) {
     val cs = MaterialTheme.colorScheme
-    Box(
-        Modifier.size(46.dp).clip(CircleShape)
-            .background(cs.tertiaryContainer.copy(alpha = 0.85f))
-            .pointerInput(code) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    client.key(code, true)
-                    waitForUpOrCancellation()
-                    client.key(code, false)
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, color = cs.onTertiaryContainer, fontWeight = FontWeight.Bold)
-    }
+    OverlayKey(
+        label, Modifier.size(48.dp), cs.tertiaryContainer, cs.onTertiaryContainer, 24.dp,
+        onDown = { client.key(code, true) },
+        onUp = { client.key(code, false) }
+    )
 }
 
 @Composable
@@ -824,7 +839,7 @@ private suspend fun PointerInputScope.touchpad(
                 return@awaitEachGesture
             }
 
-            val r = withTimeoutOrNull(2000) {
+            val r = withTimeoutOrNull(500) {
                 var res = G.UP
                 while (true) {
                     val c = awaitPointerEvent().changes.first()
@@ -856,8 +871,10 @@ private suspend fun PointerInputScope.touchpad(
                 job = launch {
                     delay(300)
                     val btn = if (taps >= 3) right else left
-                    client.mouseButton(btn, true)
-                    client.mouseButton(btn, false)
+                    repeat(if (taps >= 3) 1 else taps) {
+                        client.mouseButton(btn, true)
+                        client.mouseButton(btn, false)
+                    }
                     taps = 0
                 }
             }
@@ -875,6 +892,12 @@ private fun Joystick(client: RdpClient, modifier: Modifier) {
     fun update(code: Int, on: Boolean) {
         if (on && active.add(code)) client.key(code, true)
         if (!on && active.remove(code)) client.key(code, false)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            active.toList().forEach { update(it, false) }
+        }
     }
 
     Box(
@@ -1011,7 +1034,7 @@ private fun KeyPanel(
         "Shift" to KeyEvent.KEYCODE_SHIFT_LEFT,
         "Del" to KeyEvent.KEYCODE_FORWARD_DEL,
         "Enter" to KeyEvent.KEYCODE_ENTER,
-        "Back" to KeyEvent.KEYCODE_DEL,
+        "Backspace" to KeyEvent.KEYCODE_DEL,
         "←" to KeyEvent.KEYCODE_DPAD_LEFT,
         "↑" to KeyEvent.KEYCODE_DPAD_UP,
         "↓" to KeyEvent.KEYCODE_DPAD_DOWN,
@@ -1032,6 +1055,13 @@ private fun KeyPanel(
     )
     val held = remember { mutableStateListOf<Int>() }
 
+    DisposableEffect(client) {
+        onDispose {
+            held.toList().forEach { client.key(it, false) }
+            held.clear()
+        }
+    }
+
     Surface(
         modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
         shape = MaterialTheme.shapes.extraLarge,
@@ -1042,24 +1072,28 @@ private fun KeyPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
-                FilterChip(phoneOn, onPhone, { Text("Phone keyboard") })
+                FilterChip(phoneOn, onPhone, { Text("Text input") })
             }
             item {
                 AssistChip(
                     {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.primaryClip?.getItemAt(0)?.text?.let { client.pasteText(it.toString()) }
+                        val clip = cm.primaryClip
+                        if (clip != null && clip.itemCount > 0) {
+                            clip.getItemAt(0)?.text?.let { client.pasteText(it.toString()) }
+                        }
                     },
-                    { Text("Paste clipboard") }
+                    { Text("Paste") }
                 )
             }
             items(combos) { (n, code) ->
                 AssistChip(
                     {
-                        client.key(KeyEvent.KEYCODE_CTRL_LEFT, true)
+                        val ctrlHeld = KeyEvent.KEYCODE_CTRL_LEFT in held
+                        if (!ctrlHeld) client.key(KeyEvent.KEYCODE_CTRL_LEFT, true)
                         client.key(code, true)
                         client.key(code, false)
-                        client.key(KeyEvent.KEYCODE_CTRL_LEFT, false)
+                        if (!ctrlHeld) client.key(KeyEvent.KEYCODE_CTRL_LEFT, false)
                     },
                     { Text(n) }
                 )
